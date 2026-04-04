@@ -45,7 +45,7 @@ def format_reward(prompt, completions, **kwargs):
     for i in range(len(completions)):
         testo_generato = completions[i][0]['content'] if isinstance(completions[i], list) else completions[i]
         
-        # If the model respect formatting instructions receives 1.0 else -1.0
+        # If the model respect the formatting instructions receives 1.0 else -1.0
         if re.search(r'####\s*[-+]?\d*\.?\d+', testo_generato):
             rewards.append(1.0)
         else:
