@@ -23,7 +23,6 @@ from peft import PeftModel
 model, lora_confg = get_model()
 model_sftt = PeftModel.from_pretrained(model, 'sftt_GMS8K_model')
 
-
 # Load datasets
 dataset = load_dataset("openai/gsm8k", "main")
 dataset_train = dataset['train']
@@ -43,7 +42,7 @@ training_args = GRPOConfig(
     bf16=True,
     per_device_train_batch_size=1,
     gradient_accumulation_steps=8,
-    num_train_epochs=50
+    num_train_epochs=5
 )
 
 # Init the GRPO trainer 
@@ -57,3 +56,4 @@ trainer = GRPOTrainer(
 
 trainer.train()
 wandb.finish()
+trainer.model.save_pretrained('rlvr_GMS8K_model')
