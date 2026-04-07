@@ -13,11 +13,11 @@ def get_model():
     )
 
     MODEL_ID = 'Qwen/Qwen2.5-3B'
-    model = AutoModelForCausalLM(
+    model = AutoModelForCausalLM.from_pretrained(
         MODEL_ID, 
         torch_dtype = torch.bfloat16,
-        attn_implementation = 'flash_attention_2',
-        device = 'auto'
+        attn_implementation = 'sdpa',
+        device_map = 'auto'
     )
 
     return model, peft_confing
