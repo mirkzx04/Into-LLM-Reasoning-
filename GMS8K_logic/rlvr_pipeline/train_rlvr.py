@@ -1,7 +1,9 @@
 import os 
+import torch as th
+import gc
 os.environ['WANDB_API_KEY'] = ''
 
-run_name = ''
+run_name = 'Run_1'
 
 import wandb
 wandb.init(
@@ -22,10 +24,21 @@ from peft import PeftModel
 # Load mnodel 
 model, lora_confg = get_model()
 model_sftt = PeftModel.from_pretrained(model, 'sftt_GMS8K_model')
+model_merged = model_sftt.merge_and_unload()
+
+del model, model_sftt
+th.cuda.empty_cache()
+gc.collect()
+
+def format_prompt(example):
+    return {"text": f"Question: {example['question']}\nAnswer: {example['answer']}"}
 
 # Load datasets
+print('Loading dataset')
 dataset = load_dataset("openai/gsm8k", "main")
-dataset_train = dataset['train']
+dataset_train = dataset['train'].map(format_prompt, remove_columns=['question', 'answer'])
+dataset_eval  = dataset['test'].map(format_prompt, remove_columns=['question', 'answer'])
+print('Train dataset has loaded')
 
 # Build dataset fro training loop 
 dataset_train = map_dataset(dataset_train)
@@ -35,13 +48,16 @@ training_args = GRPOConfig(
     output_dir='rlvr_GMS8K_result',
     learning_rate=3e-6,
     num_generations=8,
-    map_prompt_lenght=256,
+    max_lenght = 1024,
     max_completion_lenght = 512,
     report_to = 'wandb',
     logging_steps = 1,
     bf16=True,
-    per_device_train_batch_size=1,
-    gradient_accumulation_steps=8,
+    gradient_checkpointing=True,
+    logging_strategy='epoch',
+    eval_strategy='epoch',
+    save_strategy='best',  
+    load_best_model_at_end=True,
     num_train_epochs=5
 )
 
