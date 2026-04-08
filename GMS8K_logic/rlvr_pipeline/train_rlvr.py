@@ -1,6 +1,8 @@
 import os 
-import torch as th
-import gc
+import sys
+
+parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+sys.path.append(parent_dir)
 os.environ['WANDB_API_KEY'] = ''
 
 run_name = 'Run_1'
@@ -11,7 +13,8 @@ wandb.init(
     name=f'GSM8K-RLVR-Test : {run_name}'
 )
 
-from build_dataset import map_dataset
+import torch as th
+import gc
 
 from rewards_utils import accuracy_reward, format_reward
 
