@@ -48,7 +48,6 @@ training_args = GRPOConfig(
     output_dir='rlvr_GMS8K_result',
     learning_rate=3e-6,
     num_generations=8,
-    max_length = 1024,
     max_completion_length = 512,
     report_to = 'wandb',
     logging_steps = 1,
@@ -63,7 +62,7 @@ training_args = GRPOConfig(
 
 # Init the GRPO trainer 
 trainer = GRPOTrainer(
-    model = model_sftt,
+    model = model_merged,
     reward_funcs=[accuracy_reward, format_reward],
     args = training_args,
     train_dataset=dataset_train,
