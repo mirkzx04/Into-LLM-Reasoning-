@@ -43,16 +43,13 @@ dataset_train = dataset['train'].map(format_prompt, remove_columns=['question', 
 dataset_eval  = dataset['test'].map(format_prompt, remove_columns=['question', 'answer'])
 print('Train dataset has loaded')
 
-# Build dataset fro training loop 
-dataset_train = map_dataset(dataset_train)
-
 # Configuration of GRPO 
 training_args = GRPOConfig(
     output_dir='rlvr_GMS8K_result',
     learning_rate=3e-6,
     num_generations=8,
-    max_lenght = 1024,
-    max_completion_lenght = 512,
+    max_length = 1024,
+    max_completion_length = 512,
     report_to = 'wandb',
     logging_steps = 1,
     bf16=True,
