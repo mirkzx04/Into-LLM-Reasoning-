@@ -51,11 +51,6 @@ def main():
     dataset_eval  = datasets['test'].map(format_prompt, remove_columns=datasets["test"].column_names)
     print('Train dataset has loaded')
 
-    # print(dataset_train[0])
-    # print(type(dataset_train[0]["prompt"]))
-    # print(type(dataset_train[0]["prompt"][0]))
-    # print(type(dataset_train[0]["prompt"][0]["content"]))
-
     # Configuration of GRPO 
     training_args = GRPOConfig(
         output_dir='rlvr_GMS8K_result',
