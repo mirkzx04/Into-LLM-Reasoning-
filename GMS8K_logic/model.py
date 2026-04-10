@@ -17,7 +17,6 @@ def get_model():
         MODEL_ID, 
         torch_dtype = torch.bfloat16,
         attn_implementation = 'sdpa',
-        device_map = 'auto'
     )
 
     return model, peft_confing
