@@ -5,7 +5,7 @@ def extract_answer(txt):
     """
     Search '###' into the LLM answer and take it
     """
-    match = re.search(f'####\s*(.*)', txt)
+    match = re.search('####\s*(.*)', txt)
     if match: 
         return match.group(1).strip()
     return None
@@ -37,7 +37,7 @@ def accuracy_reward(prompts, completions, answer, **kwargs) :
     
     return rewards
 
-def format_reward(prompt, completions, **kwargs):
+def format_reward(prompts, completions, **kwargs):
     """
     Give the model a prize if the model respect formatting instructions
     """
