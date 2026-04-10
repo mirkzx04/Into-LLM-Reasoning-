@@ -39,7 +39,7 @@ def main():
     model, lora_confg = get_model()
     model_sftt = PeftModel.from_pretrained(model, 'sftt_GMS8K_model')
     model_merged = model_sftt.merge_and_unload()
-
+    print(f'Model on : {next(model_merged.parameters()).device}')
     del model, model_sftt
     th.cuda.empty_cache()
     gc.collect()
@@ -55,15 +55,24 @@ def main():
     training_args = GRPOConfig(
         output_dir='rlvr_GMS8K_result',
         learning_rate=3e-6,
-        num_generations=8,
-        max_completion_length = 512,
+
+        per_device_train_batch_size=1,
+        per_device_eval_batch_size=1,
+        gradient_accumulation_steps=1,
+
+        num_generations=4,
+        max_completion_length = 128,
+        max_prompt_length = 128,
+
         report_to = 'wandb',
-        logging_steps = 1,
+        logging_strategy='epoch',
+
         bf16=True,
         gradient_checkpointing=True,
-        logging_strategy='epoch',
+        
         eval_strategy='epoch',
-        save_strategy='epoch',  
+        save_strategy='epoch', 
+
         load_best_model_at_end=True,
         num_train_epochs=5
     )
