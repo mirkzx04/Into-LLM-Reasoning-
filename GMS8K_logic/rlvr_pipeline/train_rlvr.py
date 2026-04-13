@@ -58,22 +58,29 @@ def main():
 
         per_device_train_batch_size=1,
         per_device_eval_batch_size=2,
-        gradient_accumulation_steps=2,
+        gradient_accumulation_steps=4,
 
-        num_generations=2,
+        num_generations=6,
         max_completion_length = 128,
 
+        temperature=1.1, 
+        top_p = 0.95,
+
+        scale_rewards="batch",
+        loss_type="dr_grpo",
+        reward_weights=[1.0, 0.1],
+
         report_to = 'wandb',
-        logging_strategy='epoch',
+        logging_strategy='steps',
+        logging_steps=10,
 
         bf16=True,
         gradient_checkpointing=True,
         
         eval_strategy='epoch',
         save_strategy='epoch', 
-
         load_best_model_at_end=True,
-        num_train_epochs=5
+        num_train_epochs=2
     )
 
     # Init the GRPO trainer 
