@@ -14,8 +14,7 @@ wandb.init(
     name=f'GSM8K-SFTT-Test : {run_name}'
 )
 
-from build_dataset import map_dataset
-from model import get_model
+from models.model import get_model
 
 from datasets import load_dataset, Dataset
 from trl import SFTTrainer, SFTConfig
