@@ -1,6 +1,5 @@
 import os 
 import sys
-
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 os.environ['WANDB_API_KEY'] = ''
@@ -39,7 +38,8 @@ def main():
     model, lora_confg = get_model()
     model_sftt = PeftModel.from_pretrained(model, 'sftt_GMS8K_model')
     model_merged = model_sftt.merge_and_unload()
-    print(f'Model on : {next(model_merged.parameters()).device}')
+    model_merged = model_merged.to(device = 'cuda')
+
     del model, model_sftt
     th.cuda.empty_cache()
     gc.collect()
@@ -57,12 +57,11 @@ def main():
         learning_rate=3e-6,
 
         per_device_train_batch_size=1,
-        per_device_eval_batch_size=1,
-        gradient_accumulation_steps=1,
+        per_device_eval_batch_size=2,
+        gradient_accumulation_steps=2,
 
-        num_generations=4,
+        num_generations=2,
         max_completion_length = 128,
-        max_prompt_length = 128,
 
         report_to = 'wandb',
         logging_strategy='epoch',
