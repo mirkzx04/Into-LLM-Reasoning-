@@ -1,7 +1,7 @@
 import os 
 import sys
-parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.append(parent_dir)
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.append(project_root)
 os.environ['WANDB_API_KEY'] = ''
 
 run_name = 'Run_2'
@@ -13,11 +13,13 @@ import multiprocessing as mp
 
 from rewards_utils import accuracy_reward, format_reward
 
-from models.model_wrapper import gsm8k_sftt_model
+from models.model_wrapper import gsm8k_rlvr_model
 
 from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
 from peft import PeftModel
+
+device = "cuda" if th.cuda.is_available() else "cpu"
 
 def format_prompt(example):
     prompt_txt = f"Resolve this math problem with reasoning step by step. Math problem : f{example['question']}"
@@ -35,12 +37,9 @@ def main():
     )
 
     # Load model
-    model, lora_confg = gsm8k_sftt_model()
-    model_sftt = PeftModel.from_pretrained(model, 'sftt_GMS8K_model')
-    model_merged = model_sftt.merge_and_unload()
-    model_merged = model_merged.to(device = 'cuda')
+    model, lora_confg = gsm8k_rlvr_model()
+    model = model.to(device)
 
-    del model, model_sftt
     th.cuda.empty_cache()
     gc.collect()
 
@@ -56,9 +55,9 @@ def main():
         output_dir='rlvr_GMS8K_result',
         learning_rate=3e-6,
 
-        per_device_train_batch_size=1,
-        per_device_eval_batch_size=2,
-        gradient_accumulation_steps=4,
+        per_device_train_batch_size=2,
+        per_device_eval_batch_size=1,
+        gradient_accumulation_steps=3,
 
         num_generations=6,
         max_completion_length = 128,
@@ -85,7 +84,7 @@ def main():
 
     # Init the GRPO trainer 
     trainer = GRPOTrainer(
-        model = model_merged,
+        model = model,
         reward_funcs=[accuracy_reward, format_reward],
         args = training_args,
         train_dataset=dataset_train,

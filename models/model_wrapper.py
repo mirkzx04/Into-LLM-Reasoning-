@@ -1,6 +1,6 @@
 from peft import PeftModel
 
-from model import get_model
+from models.model import get_model
 
 def gsm8k_rlvr_model(model_pth = 'rlvr_GMS8K_model'):
     model, lora_confg = get_model()
