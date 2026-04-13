@@ -13,7 +13,7 @@ import multiprocessing as mp
 
 from rewards_utils import accuracy_reward, format_reward
 
-from models.model_wrapper import gsm8k_rlvr_model
+from models.model_wrapper import gsm8k_sftt_model
 
 from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
@@ -22,7 +22,11 @@ from peft import PeftModel
 device = "cuda" if th.cuda.is_available() else "cpu"
 
 def format_prompt(example):
-    prompt_txt = f"Resolve this math problem with reasoning step by step. Math problem : f{example['question']}"
+    prompt_txt = (
+        f"Solve this math problem step by step."
+        f"At the end, write only the final answer in the format #### <number>\n"
+        f"problem : {example['question']}"
+    )
     return {
         "prompt" : [
             {"role" : "user", "content" : prompt_txt}
@@ -37,7 +41,7 @@ def main():
     )
 
     # Load model
-    model, lora_confg = gsm8k_rlvr_model()
+    model, lora_confg = gsm8k_sftt_model()
     model = model.to(device)
 
     th.cuda.empty_cache()
@@ -55,12 +59,12 @@ def main():
         output_dir='rlvr_GMS8K_result',
         learning_rate=3e-6,
 
-        per_device_train_batch_size=2,
-        per_device_eval_batch_size=1,
-        gradient_accumulation_steps=3,
+        per_device_train_batch_size=16,
+        per_device_eval_batch_size=16,
+        gradient_accumulation_steps=12,
 
-        num_generations=6,
-        max_completion_length = 128,
+        num_generations=8,
+        max_completion_length = 512,
 
         temperature=1.1, 
         top_p = 0.95,
@@ -71,7 +75,7 @@ def main():
 
         report_to = 'wandb',
         logging_strategy='steps',
-        logging_steps=10,
+        logging_steps=2,
 
         bf16=True,
         gradient_checkpointing=True,
