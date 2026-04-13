@@ -45,7 +45,7 @@ def compute_pairwise_cka(model_acts):
         ('sftt', 'rlvr')
     ]
     components = ['attn_act', 'mlp_act']
-    results = {comp for comp in components}
+    results = {comp : {} for comp in components}
 
     for comp in components:
         for m1, m2 in pairs:
@@ -55,8 +55,14 @@ def compute_pairwise_cka(model_acts):
             layers = model_acts[m1][comp].keys()
 
             for l in layers:
-                X = model_acts[m1][comp][l].float().to(device = device)
-                Y = model_acts[m2][comp][l].float().to(device = device)
+                X = model_acts[m1][comp][l].float().to(device)
+                Y = model_acts[m2][comp][l].float().to(device)
+
+                if X.shape != Y.shape : 
+                    raise ValueError(
+                        f'Shape mismatch for {comp}, layer {l}, pair {pair_name}' 
+                        f'{X.shape} vs {Y.shape}'
+                    )
 
                 # Check shape
                 if X.ndim == 3:
@@ -66,6 +72,8 @@ def compute_pairwise_cka(model_acts):
                 
                 cka_value = linear_cka(X, Y)
                 results[comp][pair_name][l] = cka_value
+
+                del X, Y
 
 def plot_cka_by_layer(cka_results):
     for comp in ["attn_act", "mlp_act"]:
