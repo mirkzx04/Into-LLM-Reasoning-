@@ -4,7 +4,7 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 os.environ['WANDB_API_KEY'] = ''
 
-run_name = 'Run_1'
+run_name = 'Run_2'
 
 import wandb
 import torch as th
@@ -13,7 +13,7 @@ import multiprocessing as mp
 
 from rewards_utils import accuracy_reward, format_reward
 
-from model import get_model
+from models.model_wrapper import gsm8k_sftt_model
 
 from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
@@ -35,7 +35,7 @@ def main():
     )
 
     # Load model
-    model, lora_confg = get_model()
+    model, lora_confg = gsm8k_sftt_model()
     model_sftt = PeftModel.from_pretrained(model, 'sftt_GMS8K_model')
     model_merged = model_sftt.merge_and_unload()
     model_merged = model_merged.to(device = 'cuda')
