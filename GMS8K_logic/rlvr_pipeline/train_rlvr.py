@@ -4,7 +4,7 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 sys.path.append(project_root)
 os.environ['WANDB_API_KEY'] = ''
 
-run_name = 'Run_2'
+run_name = 'Run_3-New Concise Accuracy Reward'
 
 import wandb
 import torch as th

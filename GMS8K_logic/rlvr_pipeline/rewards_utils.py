@@ -53,8 +53,8 @@ def format_reward(prompts, completions, **kwargs):
             
     return rewards
 
-def concise_accuracy_reward(completions, completions_ids, answer, trainer_state, **kwargs):
-    reward = []
+def concise_accuracy_reward(completions, completion_ids, answer, trainer_state, **kwargs):
+    rewards = []
 
     # Curriculum
     step = 0 if trainer_state is None else trainer_state.global_step
@@ -63,7 +63,7 @@ def concise_accuracy_reward(completions, completions_ids, answer, trainer_state,
     target_len = 200
     fade_span = 150
     
-    for ids, comp, gt in zip(completions_ids, completions, answer):
+    for ids, comp, gt in zip(completion_ids, completions, answer):
         txt = comp[0]["content"] if isinstance(comp, list) else comp
 
         pred_str = extract_answer(txt)
@@ -75,11 +75,13 @@ def concise_accuracy_reward(completions, completions_ids, answer, trainer_state,
         )
 
         if not correct:
-            reward.append(0.0)
+            rewards.append(0.0)
             continue
 
         L = len(ids)
         overflow = max(0, L - target_len)
         bonus = max(0.0, 1.0 - overflow / fade_span)
 
-        reward.append(alpha * bonus)
+        rewards.append(alpha * bonus)
+
+    return rewards
