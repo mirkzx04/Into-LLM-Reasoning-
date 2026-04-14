@@ -90,12 +90,12 @@ def main():
     trainer = GRPOTrainer(
         model = model,
         reward_funcs=[accuracy_reward, format_reward],
-        args = training_args,
+        args = training_args, 
         train_dataset=dataset_train,
         eval_dataset=dataset_eval,
         peft_config=lora_confg,
     )
-
+ 
     print("Training has started")
     trainer.train()
     wandb.finish()
