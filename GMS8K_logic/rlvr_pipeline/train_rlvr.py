@@ -11,7 +11,7 @@ import torch as th
 import gc
 import multiprocessing as mp
 
-from rewards_utils import accuracy_reward, format_reward
+from rewards_utils import accuracy_reward, format_reward, concise_accuracy_reward
 
 from models.model_wrapper import gsm8k_sftt_model
 
@@ -71,7 +71,7 @@ def main():
 
         scale_rewards="batch",
         loss_type="dr_grpo",
-        reward_weights=[1.0, 0.1],
+        reward_weights=[1.0, 0.1, 0.2],
 
         report_to = 'wandb',
         logging_strategy='steps',
@@ -89,7 +89,7 @@ def main():
     # Init the GRPO trainer 
     trainer = GRPOTrainer(
         model = model,
-        reward_funcs=[accuracy_reward, format_reward],
+        reward_funcs=[accuracy_reward, format_reward, concise_accuracy_reward],
         args = training_args, 
         train_dataset=dataset_train,
         eval_dataset=dataset_eval,
