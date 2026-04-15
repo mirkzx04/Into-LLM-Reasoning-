@@ -54,7 +54,9 @@ We have used three different reward :
     - $y$  : ground-truth
     - $\hat{y}$ : mathematics model answer
     
-    Now define $C(\hat{y}, y) = \begin{cases} 1 \text{ if } y = \hat{y} \\ 0 \text{ else} \end{cases}$.
+    Now define the accuracy function as follows : 
+    
+    $C(\hat{y}, y) = \begin{cases} 1 \text{ if } y = \hat{y} \\ 0 \text{ else} \end{cases}$.
 
     The reward use a progressive activation, which we have defined as $\alpha(t) = \min(1, \frac{t}{200})$.
     Now define $L_t$, which is the token-lenght target and $S$, which is fade-span, then we compute $\text{overflow}(L) = max(0, L-L_0)$ and concise bonus $b(L) =max(0, 1 - \frac{\text{overflow}(L)}{S})$. In the end we have $R_{ca} = \alpha(t)C(\hat{y},y)b(L)$
