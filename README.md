@@ -59,8 +59,7 @@ We have used three different reward :
         \begin{cases}
             1 \text{ if } y = \hat{y} \\
             0 \text{ else} 
-        \end{cases}
-    $.
+        \end{cases}$.
     The reward use a progressive activation, which we have defined as $\alpha(t) = \min(1, \frac{t}{200})$.
     Now define $L_t$, which is the token-lenght target and $S$, which is fade-span, then we compute $\text{overflow}(L) = max(0, L-L_0)$ and concise bonus $b(L) =max(0, 1 - \frac{\text{overflow}(L)}{S})$. In the end we have $R_{ca} = \alpha(t)C(\hat{y},y)b(L)$
     
@@ -70,6 +69,7 @@ We have used $R_{ca}$ why in the first train, where we have used only $R_f$ and 
 
 ## Training Result
 Training result are was good. The model (Qwen2.5-G1-3B) respect the format and has a good mathematics accuracy
+
 ![alt text](readme_imgs/image-1.png) ![alt-text](readme_imgs/image.png)
 
-Also the lenght of answer is good, we have $ \text{mean\_terminated\_lenght} \sim  185$, this is means that all model answer has $ \sim 185 $ tokens, the $ \text{clip\_rato} \approx 0 $. So now we have a model that solves mathematics discretely.
+Also the lenght of answer is good, we have $\text{mean\_terminated\_lenght} \sim  185$, this is means that all model answer has $ \sim 185 $ tokens, the $\text{clip\_rato} \approx 0$. So now we have a model that solves mathematics discretely.
