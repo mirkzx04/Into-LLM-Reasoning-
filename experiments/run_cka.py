@@ -7,7 +7,7 @@ import torch as th
 import matplotlib.pyplot as plt
 import numpy as np
 
-from analysis import extract_activation
+from analysis.extract_activation import extract_mlp_attn_out
 
 device = 'cuda' if th.cuda.is_available() else 'cpu'
 
@@ -116,7 +116,7 @@ def plot_cka_heatmap(cka_results):
         plt.show()
 
 def compute_cka(last_token = True):
-    model_acts = extract_activation(last_token = last_token)
+    model_acts = extract_mlp_attn_out(prompts='', last_token = last_token)
     cka_results = compute_pairwise_cka(model_acts=model_acts)
     
     plot_cka_by_layer(cka_results)
