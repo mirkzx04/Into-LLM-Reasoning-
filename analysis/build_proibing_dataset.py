@@ -5,6 +5,7 @@ sys.path.append(parent_dir)
 
 import pandas as pd
 import numpy as np
+import torch as th
 
 from math_verify import parse, verify
 from datasets import load_dataset
@@ -15,6 +16,21 @@ from models.model import get_tokenizer
 from models.model_wrapper import gsm8k_rlvr_model, gsm8k_sftt_model, get_model
 
 from GMS8K_logic.rlvr_pipeline.rewards_utils import extract_answer
+
+def generate_text(model, tokenizer, prompt, max_tokens = 512):
+    device = next(model.parameters()).device
+    inputs = tokenizer(prompt, return_tensor = 'pt').to(device)
+
+    with th.no_grad():
+        out = model.generate(
+            **inputs,
+            max_new_tokens = max_tokens,
+            do_sample = False,
+            pad_token_id = tokenizer.pad_token_id,
+            eos_token_id = tokenizer.eos_token_id
+        )
+    new_tokens = out[0, inputs['input_ids'].shape[1]:]
+    return tokenizer.decode(new_tokens, skip_spacial_tokens = True)
 
 platinum = load_dataset("madrylab/gsm8k-platinum", "main", split="test")
 
