@@ -4,23 +4,55 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 
 import torch as th
-import numpy as np
-import pandas as np
-
-from datasets import load_dataset
 
 from transformer_lens import HookedTransformer
+from pathlib import Path
 
-from models.model_wrapper import gsm8k_rlvr_model, gsm8k_sftt_model, vanilla_model
+from models.model_wrapper import export_merged_model
+from models.model import MODEL_ID
 
 from GMS8K_logic.rlvr_pipeline.rewards_utils import extract_answer
 
-# seting models and device
+# seting models dir and device
 device = 'cuda' if th.cuda.is_available() else 'cpu'
-rlvr_model = gsm8k_rlvr_model()
-sftt_model = gsm8k_sftt_model()
-base_model = vanilla_model()
-models = [(base_model, 'base'), (sftt_model, 'sftt'), (rlvr_model, 'rlvr')]
+
+ADAPTER_DIR = 'adapters'
+RLVR_ADAPTER_DIR = f'{ADAPTER_DIR}/rlvr_GMS8K_adapter'
+SFTT_ADAPTER_DIR = f'{ADAPTER_DIR}/sftt_GMS8K_adapter'
+
+MERGED_DIR = 'models_merged'
+RLVR_MERGED_DIR = f'{MERGED_DIR}/rlvr_GMS8K_model_merged'
+SFTT_MERGED_DIR = f'{MERGED_DIR}/sftt_GMS8K_model_merged'
+
+def model_checkpoint():
+    if not Path(RLVR_MERGED_DIR).exists():
+        export_merged_model(output_dir=RLVR_MERGED_DIR, adapter_dir=RLVR_ADAPTER_DIR)
+    if not Path(SFTT_MERGED_DIR).exists(): 
+        export_merged_model(output_dir=SFTT_MERGED_DIR, adapter_dir=SFTT_ADAPTER_DIR)
+
+model_checkpoint()
+
+base_tl = HookedTransformer.from_pretrained_no_processing(
+    MODEL_ID,
+    device = device,
+    dtype=th.bfloat16,
+)
+base_tl = HookedTransformer.from_pretrained_no_processing(
+    SFTT_MERGED_DIR,
+    device = device,
+    dtype=th.bfloat16,
+)
+base_tl = HookedTransformer.from_pretrained_no_processing(
+    RLVR_MERGED_DIR,
+    device = device,
+    dtype=th.bfloat16,
+)
+
+models = [
+    (base_tl, 'base'), 
+    (base_tl, 'sftt'), 
+    (base_tl, 'rlvr')
+]
 
 # Setting system prompt
 SYSTEM_PROMPT = 'Solve this math problem thinking step by step'
@@ -70,21 +102,20 @@ def extract_mlp_attn_out(prompts, last_token = True):
     return models_act
 
 def extract_residual_out(prompts, last_token = True):
-    resid_post_outs = []
-    resid_attn_outs = []
-    resid_attn_mlp_outs = []
-
+    
     model_residuals = {}
 
-
     for couple in models:
+        resid_post_outs = {}
+        resid_attn_outs = {}
+        resid_attn_mlp_outs = {}
+
         model = couple[0]
         model_name = couple[1]
 
-        model_cache = forward_with_cache(model)
-
-
+        model_cache = forward_with_cache(prompts, model)
         n_layers = model.cfg.n_layers
+        
         interesting_layers = [0, n_layers // 2, n_layers - 1]
 
         for l in interesting_layers:
@@ -94,22 +125,16 @@ def extract_residual_out(prompts, last_token = True):
                 resid_attn = model_cache['resid_mid', l][:, -1, :].detach().cpu()
                 resid_attn_mlp = model_cache['resid_post', l][:, -1, :].detach().cpu()
 
-                # Shape : [3, B, d_model]
-                resid_post_outs.append(resid_post) 
-                resid_attn_outs.append(resid_attn)
-                resid_attn_mlp_outs.append(resid_attn_mlp)
             else :
                 # Shape : [B, post, d_model]
                 resid_post = model_cache['resid_post', l].detach().cpu()
                 resid_attn = model_cache['resid_mid', l].detach().cpu()
                 resid_attn_mlp = model_cache['resid_post', l].detach().cpu()
 
-                # Shape : [3, B, post, d_model]
-                resid_post_outs.append(resid_post) 
-                resid_attn_outs.append(resid_attn)
-                resid_attn_mlp_outs.append(resid_attn_mlp)
-            
-            
+            resid_post_outs[l] = resid_post 
+            resid_attn_outs[l] = resid_attn
+            resid_attn_mlp_outs[l] = resid_attn_mlp
+                        
             model_residuals[model_name] = {
                 'resid_post_outs' : resid_post_outs,
                 'resid_attn_outs' : resid_attn_outs, 
