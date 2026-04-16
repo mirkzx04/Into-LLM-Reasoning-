@@ -93,9 +93,9 @@ for q, a in zip(platinum['question'], platinum['answer']):
         'resid_attn' : models_residuals['base']['resid_attn_outs']
     })
 
-df_rlvr = pd.DataFrame(rlvr_rows)
-df_sftt = pd.DataFrame(sftt_rows)
-df_base = pd.DataFrame(base_rows)
+pd.DataFrame(rlvr_rows).to_pickle('df_rlvr.pkl')
+pd.DataFrame(sftt_rows).to_pickle('df_sftt.pkl')
+pd.DataFrame(base_rows).to_pickle('df_base.pkl')
     
 
     
