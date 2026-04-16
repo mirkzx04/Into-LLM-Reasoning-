@@ -16,8 +16,3 @@ def load_merged_model(adapter_dir):
     model = get_model()
     model = PeftModel.from_pretrained(model, adapter_dir)
     return model.merge_and_unload()
-
-def export_merged_model(output_dir, adapter_dir):
-    model = load_merged_model(adapter_dir)
-    model.save_pretrained(output_dir)
-
