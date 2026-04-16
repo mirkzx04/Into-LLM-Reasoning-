@@ -5,13 +5,14 @@ sys.path.append(parent_dir)
 
 import torch as th
 
+import models.rope_theta
+
+from transformers import AutoConfig
 from transformer_lens import HookedTransformer
 from pathlib import Path
 
-from models.model_wrapper import export_merged_model
-from models.model import MODEL_ID
-
-from GMS8K_logic.rlvr_pipeline.rewards_utils import extract_answer
+from models.model_wrapper import load_merged_model
+from models.model import MODEL_ID, get_model, get_tokenizer
 
 # seting models dir and device
 device = 'cuda' if th.cuda.is_available() else 'cpu'
@@ -20,38 +21,32 @@ ADAPTER_DIR = 'adapters'
 RLVR_ADAPTER_DIR = f'{ADAPTER_DIR}/rlvr_GMS8K_adapter'
 SFTT_ADAPTER_DIR = f'{ADAPTER_DIR}/sftt_GMS8K_adapter'
 
-MERGED_DIR = 'models_merged'
-RLVR_MERGED_DIR = f'{MERGED_DIR}/rlvr_GMS8K_model_merged'
-SFTT_MERGED_DIR = f'{MERGED_DIR}/sftt_GMS8K_model_merged'
-
-def model_checkpoint():
-    if not Path(RLVR_MERGED_DIR).exists():
-        export_merged_model(output_dir=RLVR_MERGED_DIR, adapter_dir=RLVR_ADAPTER_DIR)
-    if not Path(SFTT_MERGED_DIR).exists(): 
-        export_merged_model(output_dir=SFTT_MERGED_DIR, adapter_dir=SFTT_ADAPTER_DIR)
-
-model_checkpoint()
-
 base_tl = HookedTransformer.from_pretrained_no_processing(
     MODEL_ID,
+    hf_model = get_model(),
+    tokenizer = get_tokenizer(),
     device = device,
     dtype=th.bfloat16,
 )
-base_tl = HookedTransformer.from_pretrained_no_processing(
-    SFTT_MERGED_DIR,
+sff_tl = HookedTransformer.from_pretrained_no_processing(
+    MODEL_ID,
+    hf_model = load_merged_model(SFTT_ADAPTER_DIR),
+    tokenizer = get_tokenizer(),
     device = device,
     dtype=th.bfloat16,
 )
-base_tl = HookedTransformer.from_pretrained_no_processing(
-    RLVR_MERGED_DIR,
+rlvr_tl = HookedTransformer.from_pretrained_no_processing(
+    MODEL_ID,
+    hf_model = load_merged_model(RLVR_ADAPTER_DIR),
+    tokenizer = get_tokenizer(),
     device = device,
     dtype=th.bfloat16,
 )
 
 models = [
     (base_tl, 'base'), 
-    (base_tl, 'sftt'), 
-    (base_tl, 'rlvr')
+    (sff_tl, 'sftt'), 
+    (rlvr_tl, 'rlvr')
 ]
 
 # Setting system prompt
@@ -75,7 +70,7 @@ def extract_mlp_attn_out(prompts, last_token = True):
         n_layers = model.cfg.n_layers
 
 
-        model_cache = forward_with_cache(model, prompts)
+        model_cache = forward_with_cache(prompts, model)
 
         # Extract attn and mlp representation for each layers
         for l in range(n_layers):
@@ -142,7 +137,3 @@ def extract_residual_out(prompts, last_token = True):
             }
 
     return model_residuals
-            
-
-
-
