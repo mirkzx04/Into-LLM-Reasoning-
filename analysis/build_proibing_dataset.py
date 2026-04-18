@@ -20,7 +20,13 @@ from analysis.extract_activation import (
 
 from GMS8K_logic.rlvr_pipeline.rewards_utils import extract_answer
 
-def generate_text(model, tokenizer, prompt, max_tokens = 512):
+def generate_text(model, tokenizer, query, max_tokens = 512):
+    prompt = (
+        f"Solve this math problem step by step."
+        f"At the end, write only the final answer in the format #### <number>\n"
+        f"problem : {query}"
+    )
+
     device = next(model.parameters()).device
     inputs = tokenizer(prompt, return_tensors = 'pt').to(device)
 

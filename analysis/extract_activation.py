@@ -55,9 +55,6 @@ models = [
     (rlvr_tl, 'rlvr')
 ]
 
-# Setting system prompt
-SYSTEM_PROMPT = 'Solve this math problem thinking step by step'
-
 def forward_with_cache(model, prompts, last_token, names_filter = None):
     with th.no_grad():
         _, cache = model.run_with_cache(
@@ -83,7 +80,7 @@ def extract_mlp_attn_out(prompts, last_token = True):
 
         # Extract attn and mlp representation for each layers
         for l in range(n_layers):
-            # Shape : [B, d_model] or [B, pos, d_mod
+            # Shape : [B, d_model] or [B, pos, d_mod]
             attn_out = model_cache['attn_out', l].detach().cpu()
             mlp_out = model_cache['mlp_out', l].detach().cpu()
         
