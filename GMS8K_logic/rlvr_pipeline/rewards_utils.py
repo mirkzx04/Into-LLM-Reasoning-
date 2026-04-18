@@ -8,6 +8,15 @@ def extract_answer(txt):
     match = re.search('####\s*(.*)', txt)
     if match: 
         return match.group(1).strip()
+    
+    match = re.search(r'Answer\s*:\s*(.*)', txt, re.IGNORECASE | re.DOTALL)
+    if match:
+        return match.group(1).strip().splitlines()[0].strip()
+
+    nums = re.findall(r'[-+]?\d*\.?\d+', txt)
+    if nums:
+        return nums[-1]
+
     return None
 
 def accuracy_reward(prompts, completions, answer, **kwargs) : 
