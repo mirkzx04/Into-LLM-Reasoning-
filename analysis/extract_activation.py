@@ -116,16 +116,13 @@ def extract_residual_out(prompts, last_token = True):
         resid_attn_outs = {}
         resid_attn_mlp_outs = {}
 
-        for hook in hook_names:
-            # Shape : [B, d_model] or [B, pos, d_model]
-            resid_pre = model_cache[hook].detach().cpu()
-            resid_attn = model_cache[hook].detach().cpu()
-            resid_attn_mlp = model_cache[hook].detach().cpu()
+        for l in interesting_layers:
 
-            resid_pre_outs[l] = resid_pre 
-            resid_attn_outs[l] = resid_attn
-            resid_attn_mlp_outs[l] = resid_attn_mlp
-                        
+            # Shape : [B, d_model] or [B, pos, d_model]
+            resid_pre_outs[l] = model_cache[f'blocks.{l}.hook_resid_pre'].detach().cpu()
+            resid_attn_outs[l] = model_cache[f'blocks.{l}.hook_resid_mid'].detach().cpu()
+            resid_attn_mlp_outs[l] = model_cache[f'blocks.{l}.hook_resid_post'].detach().cpu()
+
         model_residuals[model_name] = {
             'resid_pre_outs' : resid_pre_outs,
             'resid_attn_outs' : resid_attn_outs, 
