@@ -1,96 +1,28 @@
 import re 
 from math_verify import parse, verify
 
-def extract_answer(txt):
-    """
-    Search '###' into the LLM answer and take it
-    """
-    match = re.search('####\s*(.*)', txt)
-    if match: 
-        return match.group(1).strip()
+def format_reward_func(completions, **kwargs) : 
+    pattern = r"^<thinking:step>[\s\S]*?</thinking:step><answer>\s*\\boxed{.*?}\s*</answer>$"
+    completions_content = [completion[0]["content"] for completion in completions] # Extract completion contets
+    matches = [re.match(pattern, content) for content in completions_content] # Check if che completion content respects the format
+
+    return [1.0 if match else 0.0 for match in matches]
+
+def reward_func(completions, answer, **kwargs): 
+    matches = [re.search(r"\\boxed{(.*?)}", c) for c in completions] # Extract the answer boxes
+    contents = [m.group(1) if m else "" for m in matches] # Extract the number into the answer boxes
+
+    ground_truth = [
+        re.search(r"\\boxed{(.*?)}", gt).group(1).strip() if re.search(r"\\boxed{(.*?)}", gt) else gt.strip()
+        for gt in answer
+    ]
+
+    return [1.0 if verify(parse(c), parse(gt)) else 0.0 for c, gt in zip(contents, ground_truth)]
+
+
+
+
+
+
+
     
-    match = re.search(r'Answer\s*:\s*(.*)', txt, re.IGNORECASE | re.DOTALL)
-    if match:
-        return match.group(1).strip().splitlines()[0].strip()
-
-    nums = re.findall(r'[-+]?\d*\.?\d+', txt)
-    if nums:
-        return nums[-1]
-
-    return None
-
-def accuracy_reward(prompts, completions, answer, **kwargs) : 
-    """
-    Use math verify to check if the mathematical answer is correct.
-    Assign 1.0 if the mathematical answer is correct else 0.0
-    """
-    rewards = []
-
-    # Iter on batch iteration
-    for i in range(len(completions)):
-        ground_truth = answer[i]
-        generated_txt = completions[i][0]['content'] if isinstance(completions[i], list) else completions[i]
-
-        #  Extract the string
-        pred_str = extract_answer(generated_txt)
-        gt_str = extract_answer(ground_truth)
-
-        # If the model don t place '####' into the answer the formatting is wrong 
-        if pred_str is None or gt_str is None:
-            rewards.append(0.0)
-            continue
-        
-        # Math verify check if the answer and ground truth is mathematical equivalents
-        is_correct = verify(parse(pred_str), parse(gt_str))
-        rewards.append(1.0 if is_correct else 0.0)
-    
-    return rewards
-
-def format_reward(prompts, completions, **kwargs):
-    """
-    Give the model a prize if the model respect formatting instructions
-    """
-    rewards = []
-    for i in range(len(completions)):
-        testo_generato = completions[i][0]['content'] if isinstance(completions[i], list) else completions[i]
-        
-        # If the model respect the formatting instructions receives 1.0 else -1.0
-        if re.search(r'####\s*[-+]?\d*\.?\d+', testo_generato):
-            rewards.append(1.0)
-        else:
-            rewards.append(-1.0)
-            
-    return rewards
-
-def concise_accuracy_reward(completions, completion_ids, answer, trainer_state, **kwargs):
-    rewards = []
-
-    # Curriculum
-    step = 0 if trainer_state is None else trainer_state.global_step
-    alpha = min(1.0, step / 200.0)
-    
-    target_len = 200
-    fade_span = 150
-    
-    for ids, comp, gt in zip(completion_ids, completions, answer):
-        txt = comp[0]["content"] if isinstance(comp, list) else comp
-
-        pred_str = extract_answer(txt)
-        gt_str = extract_answer(gt)
-
-        correct = (
-            pred_str is not None and gt_str is not None
-            and verify(parse(pred_str), parse(gt_str))
-        )
-
-        if not correct:
-            rewards.append(0.0)
-            continue
-
-        L = len(ids)
-        overflow = max(0, L - target_len)
-        bonus = max(0.0, 1.0 - overflow / fade_span)
-
-        rewards.append(alpha * bonus)
-
-    return rewards
