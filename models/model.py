@@ -1,28 +1,18 @@
-import torch
+import os 
+import sys
+project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+sys.path.append(project_root)
 
-from peft import LoraConfig
+import torch as th
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-MODEL_ID = 'Qwen/Qwen2.5-3B'
+MODEL_ID = 'Qwen/Qwen2.5-1.5B'
 
-def get_lora():
-    return LoraConfig(
-        r = 16, 
-        lora_alpha=32,
-        target_modules=[
-            "q_proj",
-            "k_proj", 
-            "v_proj", 
-            "o_proj", 
-            "gate_proj", 
-            "up_proj", 
-            "down_proj"
-        ],
-        task_type='CAUSAL_LM'
-    )
+def get_tokenizer(model_path = None):
+    if not model_path: 
+        model_path = MODEL_ID
 
-def get_tokenizer():
-    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
 
     # Check padding token
     if tokenizer.pad_token is None:
@@ -31,9 +21,11 @@ def get_tokenizer():
     tokenizer.padding_side = 'left'
     return tokenizer
 
-def get_model():
+def get_model(model_path = None):
+    if not model_path: 
+        model_path = MODEL_ID
     return AutoModelForCausalLM.from_pretrained(
-        MODEL_ID, 
-        torch_dtype = torch.bfloat16,
+        model_path, 
+        torch_dtype = th.bfloat16,
         attn_implementation = 'sdpa',
     )
