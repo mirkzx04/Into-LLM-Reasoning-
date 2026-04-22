@@ -2,76 +2,77 @@ import os
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.append(project_root)
-os.environ['WANDB_API_KEY'] = ''
 
-run_name = 'Run_3-New Concise Accuracy Reward'
+run_name = 'Run_1'
 
 import wandb
 import torch as th
 import gc
 import multiprocessing as mp
 
-from rewards_utils import accuracy_reward, format_reward, concise_accuracy_reward
+from rewards_utils import acc_reward, format_reward
 
-from models.model_wrapper import gsm8k_sftt_model
+from models.model import get_model, get_tokenizer
 
 from datasets import load_dataset
 from trl import GRPOTrainer, GRPOConfig
-from peft import PeftModel
 
 device = "cuda" if th.cuda.is_available() else "cpu"
+print(device)
 
 def format_prompt(example):
     prompt_txt = (
-        f"Solve this math problem step by step."
-        f"At the end, write only the final answer in the format #### <number>\n"
-        f"problem : {example['question']}"
+        "Solve this math problem step by step.\n"
+        "Write each reasoning step inside <reasoning:step>...</reasoning:step> tags.\n"
+        "At the end, put the final answer inside <answer>\\boxed{}</answer>.\n"
+        f"Problem: {example['problem']}\n"
     )
     return {
-        "prompt" : [
-            {"role" : "user", "content" : prompt_txt}
-        ],
-        "answer" : example["answer"],
+        "prompt": prompt_txt,              # stringa, non lista di messages
+        "solution": example["solution"],   # oppure meglio risposta finale estratta
     }
 
 def main():
     wandb.init(
         project='Into LLM Reasoning',
-        name=f'GSM8K-RLVR-Test : {run_name}'
+        name=f'MATH-RLVR-Test : {run_name}'
     )
 
     # Load model
-    model, lora_confg = gsm8k_sftt_model()
-    model = model.to(device)
+    sftt_pth = "sftt_MATH_model_v2"
+    model = get_model(sftt_pth)
+    tokenizer = get_tokenizer(sftt_pth)
+    model = model.train().to(device)
 
     th.cuda.empty_cache()
     gc.collect()
 
     # Load datasets
     print('Loading dataset')
-    datasets = load_dataset("openai/gsm8k", "main")
-    dataset_train = datasets['train'].map(format_prompt, remove_columns=datasets["train"].column_names)
-    dataset_eval  = datasets['test'].map(format_prompt, remove_columns=datasets["test"].column_names)
-    print('Train dataset has loaded')
+    datasets = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default")
+    train_val = datasets["train"].train_test_split(test_size=0.15, seed = 42) # Split dataset
+
+    dataset_train = train_val["train"].map(format_prompt, remove_columns=train_val["train"].column_names)
+    dataset_val = train_val["test"].map(format_prompt, remove_columns=train_val["test"].column_names)
 
     # Configuration of GRPO 
     training_args = GRPOConfig(
         output_dir='rlvr_GMS8K_result',
-        learning_rate=3e-6,
+        learning_rate=2e-6,
 
-        per_device_train_batch_size=16,
-        per_device_eval_batch_size=16,
-        gradient_accumulation_steps=12,
+        per_device_train_batch_size=10,
+        per_device_eval_batch_size=10,
+        gradient_accumulation_steps=20,
 
-        num_generations=8,
-        max_completion_length = 512,
+        num_generations=10,
+        max_completion_length = 1024,
 
-        temperature=1.1, 
+        temperature=0.6, 
         top_p = 0.95,
 
         scale_rewards="batch",
         loss_type="dr_grpo",
-        reward_weights=[1.0, 0.1, 0.2],
+        reward_weights=[1.0, 0.15],
 
         report_to = 'wandb',
         logging_strategy='steps',
@@ -79,9 +80,11 @@ def main():
 
         bf16=True,
         gradient_checkpointing=True,
+        use_vllm=True,
+        deepspeed="ds_config.json",
         
         eval_strategy='epoch',
-        save_strategy='epoch', 
+        save_strategy='best', 
         load_best_model_at_end=True,
         num_train_epochs=2
     )
@@ -89,17 +92,17 @@ def main():
     # Init the GRPO trainer 
     trainer = GRPOTrainer(
         model = model,
-        reward_funcs=[accuracy_reward, format_reward, concise_accuracy_reward],
+        reward_funcs=[acc_reward, format_reward],
         args = training_args, 
         train_dataset=dataset_train,
-        eval_dataset=dataset_eval,
-        peft_config=lora_confg,
+        eval_dataset=dataset_val,
     )
  
     print("Training has started")
     trainer.train()
+    trainer.accelerator.wait_for_everyone()
+    trainer.save_model('rlvr_MATH_model')
     wandb.finish()
-    trainer.model.save_pretrained('rlvr_GMS8K_model')
 
 if __name__ == "__main__":
     mp.freeze_support()
