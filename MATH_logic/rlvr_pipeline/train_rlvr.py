@@ -21,7 +21,7 @@ from trl import GRPOTrainer, GRPOConfig
 device = "cuda" if th.cuda.is_available() else "cpu"
 print(device)
 
-SFTT_PTH = "sftt_model_math"
+SFTT_PTH = "sftt_numina"
 RLVR_PTH = "rlvr_model_math"
 
 TRAIN_SPLIT = ["T1", "T2", "T3"]
@@ -67,17 +67,17 @@ def main():
     for split in TRAIN_SPLIT: 
         if split == "T1" : 
             model = get_model(SFTT_PTH)
-            tokenizer = get_model(SFTT_PTH)
+            tokenizer = get_tokenizer(SFTT_PTH)
 
-            dataset_train, dataset_val = build_t1_set(tokenizer)
+            dataset_train, dataset_val = build_t1_set(tokenizer, type_training="rlvr")
         else : 
             model = get_model(RLVR_PTH)
-            tokenizer = get_model(RLVR_PTH)
+            tokenizer = get_tokenizer(RLVR_PTH)
 
             if split == "T2":
-                dataset_train, dataset_val = build_t2_set(tokenizer)
+                dataset_train, dataset_val = build_t2_set(tokenizer, type_training="rlvr")
             elif split == "T3":
-                dataset_train, dataset_val = build_t3_set(tokenizer)
+                dataset_train, dataset_val = build_t3_set(tokenizer, type_training="rlvr")
         
         run_name = f"[{split}]_Run1"
         wandb.init(

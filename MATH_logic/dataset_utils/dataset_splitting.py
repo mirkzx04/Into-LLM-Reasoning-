@@ -1,3 +1,4 @@
+
 import os 
 import sys
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
@@ -5,7 +6,7 @@ sys.path.append(project_root)
 
 from datasets import load_dataset, concatenate_datasets
 
-from MATH_logic.dataset_utils.dataset_formatting import format_sft_example
+from MATH_logic.dataset_utils.dataset_formatting import format_sft_example, format_rlvr_example
 
 NUMINA_PERCENT = 0.1
 
@@ -38,17 +39,27 @@ def sample_dataset(dataset, n_samples):
         .select(range(n_samples))
     )
 
-def format_dataset(dataset, tokenizer, dataset_name):
-    return dataset.map(
-        lambda example: format_sft_example(
-            example,
-            tokenizer,
-            dataset_name=dataset_name
-        ),
-        remove_columns=dataset.column_names
-    )
+def format_dataset(dataset, tokenizer, dataset_name, type_training):
+    if type_training == "sft" :
+        return dataset.map(
+            lambda example: format_sft_example(
+                example,
+                tokenizer,
+                dataset_name=dataset_name
+            ),
+            remove_columns=dataset.column_names
+        )
+    if type_training == "rlvr" :  
+        return dataset.map(
+            lambda example: format_rlvr_example(
+                example,
+                tokenizer,
+                dataset_name=dataset_name
+            ),
+            remove_columns=dataset.column_names
+        )
 
-def build_mixed_dataset(parts, tokenizer) :
+def build_mixed_dataset(parts, tokenizer, type_training) :
     """
         parts format:
 
@@ -73,7 +84,8 @@ def build_mixed_dataset(parts, tokenizer) :
         formatted = format_dataset(
             sampled,
             tokenizer,
-            dataset_name=part["dataset_name"]
+            dataset_name=part["dataset_name"],
+            type_trn=type_training
         )
 
         formatted_sets.append(formatted)
@@ -90,7 +102,7 @@ def build_numina_train(tokenizer):
 
     return split_train_val(numina_set)
 
-def build_t1_set(tokenizer, levels):
+def build_t1_set(tokenizer, type_training):
     total = T1_TOTAL_SAMPLES
 
     math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
@@ -108,10 +120,11 @@ def build_t1_set(tokenizer, levels):
                 "n_samples": int(total * 0.30),
             },
         ],
-        tokenizer=tokenizer
+        tokenizer=tokenizer, 
+        type_training = type_training
     )
 
-def build_t2_set(tokenizer):
+def build_t2_set(tokenizer, type_training):
     total = T2_TOTAL_SAMPLES
 
     math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
@@ -135,10 +148,11 @@ def build_t2_set(tokenizer):
                 "n_samples": int(total * 0.20),
             },
         ],
-        tokenizer=tokenizer
+        tokenizer=tokenizer,
+        type_training = type_training
     )
 
-def build_t3_set(tokenizer):
+def build_t3_set(tokenizer, type_training):
     total = T3_TOTAL_SAMPLES
 
     math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
@@ -168,5 +182,6 @@ def build_t3_set(tokenizer):
                 "n_samples": int(total * 0.10),
             },
         ],
-        tokenizer=tokenizer
+        tokenizer=tokenizer, 
+        type_training=type_training
     )
