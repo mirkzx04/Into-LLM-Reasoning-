@@ -12,6 +12,7 @@ from MATH_logic.dataset_utils.dataset_splitting import build_numina_train, build
 from trl import SFTTrainer, SFTConfig
 
 SFTT_PTH = "sftt_model_math"
+TRAIN_SPLIT = ["numina", "T1", "T2", "T3"]
 
 def process_logits_for_metrics(logits, labels):
     if isinstance(logits, tuple): 
@@ -34,12 +35,6 @@ def compute_metrics(eval_pred):
 
     accuracy = (predictions == labels).mean()
     return {'Token Accuracy': float(accuracy)}
-
-# Load model and LoRA configuration
-model = get_model()
-tokenizer = get_tokenizer()
-
-train_split = ["numina", "T1", "T2", "T3"]
 
 # Configuration of SFTT
 stft_args = SFTConfig(
@@ -71,7 +66,7 @@ stft_args = SFTConfig(
     deepspeed="ds_config.json"
 )
 
-for split in train_split:
+for split in TRAIN_SPLIT:
     if split == "numina" :
         model = get_model()
         tokenizer = get_tokenizer()
@@ -91,10 +86,10 @@ for split in train_split:
             raise ValueError(f"Unknown split: {split}")
 
 
-    run_name = 'SFT-Run_1'
+    run_name = f"[{split}]_Run1"
     wandb.init(
         project='Into LLM Reasoning',
-        name=f'GSM8K-SFTT-Test : {run_name}'
+        name=f'[MATH SFTT] : {run_name}'
     )
 
     # Init the SFTT trainer
