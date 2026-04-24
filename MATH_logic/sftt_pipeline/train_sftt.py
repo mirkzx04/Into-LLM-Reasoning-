@@ -1,22 +1,17 @@
 import os 
 import sys
 import torch as th
+import wandb
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.append(project_root)
-
-run_name = 'SFT-Run_1'
-
-import wandb
-wandb.init(
-    project='Into LLM Reasoning',
-    name=f'GSM8K-SFTT-Test : {run_name}'
-)
+os.environ["WANDB_SILENT"] = "true"
 
 from models.model import get_model, get_tokenizer
-from MATH_logic.dataset_utils import convert_solution_to_tagged_completion
+from MATH_logic.dataset_utils.dataset_splitting import build_numina_train, build_t1_set, build_t2_set, build_t3_set
 
-from datasets import load_dataset, Dataset
 from trl import SFTTrainer, SFTConfig
+
+SFTT_PTH = "sftt_model_math"
 
 def process_logits_for_metrics(logits, labels):
     if isinstance(logits, tuple): 
@@ -40,38 +35,14 @@ def compute_metrics(eval_pred):
     accuracy = (predictions == labels).mean()
     return {'Token Accuracy': float(accuracy)}
 
-def format_prompt(example, tokenizer):
-    prompt = (
-        "Solve this math problem step by step. Enclose your entire reasoning process within <thinking:step>...</thinking:step> tags.\n"
-        "At the end, put the final answer inside <answer> \\boxed{} </answer>.\n"
-        f"Problem: {example['problem']} \n"
-    )
-    completion = convert_solution_to_tagged_completion(example["solution"]) + tokenizer.eos_token 
-
-    return {
-        "prompt": prompt,
-        "completion": completion
-    }
-
-
 # Load model and LoRA configuration
 model = get_model()
 tokenizer = get_tokenizer()
 
-# Load datasets
-print('Loading dataset')
-datasets = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default")
-train_val = datasets["train"].train_test_split(test_size=0.15, seed = 42) # Split dataset
-
-dataset_train = train_val["train"].map(lambda example : format_prompt(example, tokenizer), remove_columns=train_val["train"].column_names)
-dataset_val = train_val["test"].map(lambda example : format_prompt(example, tokenizer), remove_columns=train_val["test"].column_names)
-print(dataset_train[0])
-print('Train dataset has loaded')
+train_split = ["numina", "T1", "T2", "T3"]
 
 # Configuration of SFTT
 stft_args = SFTConfig(
-    output_dir = 'sftt_MATH_result',
-
     learning_rate = 1e-6,
     warmup_steps= 0.02, 
     lr_scheduler_type="cosine",
@@ -100,17 +71,43 @@ stft_args = SFTConfig(
     deepspeed="ds_config.json"
 )
 
-# Init the SFTT trainer
-trainer = SFTTrainer(
-    model = model, 
-    train_dataset = dataset_train,
-    eval_dataset=dataset_val,
-    args = stft_args,
-    compute_metrics=compute_metrics,
-    preprocess_logits_for_metrics=process_logits_for_metrics
-)
+for split in train_split:
+    if split == "numina" :
+        model = get_model()
+        tokenizer = get_tokenizer()
 
-trainer.train()
-trainer.accelerator.wait_for_everyone()
-trainer.save_model('sftt_MATH_model_v2')
-wandb.finish()
+        dataset_train, dataset_val = build_numina_train(tokenizer)
+    else:
+        model = get_model(SFTT_PTH)
+        tokenizer = get_tokenizer(SFTT_PTH)
+
+        if split == "T1":
+            dataset_train, dataset_val = build_t1_set(tokenizer)
+        elif split == "T2":
+            dataset_train, dataset_val = build_t2_set(tokenizer)
+        elif split == "T3":
+            dataset_train, dataset_val = build_t3_set(tokenizer)
+        else:
+            raise ValueError(f"Unknown split: {split}")
+
+
+    run_name = 'SFT-Run_1'
+    wandb.init(
+        project='Into LLM Reasoning',
+        name=f'GSM8K-SFTT-Test : {run_name}'
+    )
+
+    # Init the SFTT trainer
+    trainer = SFTTrainer(
+        model = model, 
+        train_dataset = dataset_train,
+        eval_dataset=dataset_val,
+        args = stft_args,
+        compute_metrics=compute_metrics,
+        preprocess_logits_for_metrics=process_logits_for_metrics
+    )
+
+    trainer.train()
+    trainer.accelerator.wait_for_everyone()
+    trainer.save_model(SFTT_PTH)
+    wandb.finish()
