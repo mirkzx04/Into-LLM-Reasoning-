@@ -16,8 +16,8 @@ TEST_SIZE = 0.1
 NUMINA_SAMPLES = 80_000
 
 T1_TOTAL_SAMPLES = 20_000
-T2_TOTAL_SAMPLES = 20_000
-T3_TOTAL_SAMPLES = 20_000
+T2_TOTAL_SAMPLES = 30_000
+T3_TOTAL_SAMPLES = 40_000
 
 numina_set_train = load_dataset("AI-MO/NuminaMath-CoT", split = "train")
 gsm8k_set_train = load_dataset("openai/gsm8k", "main", split = "train")
@@ -53,7 +53,6 @@ def format_dataset(dataset, tokenizer, dataset_name, type_training):
         return dataset.map(
             lambda example: format_rlvr_example(
                 example,
-                tokenizer,
                 dataset_name=dataset_name
             ),
             remove_columns=dataset.column_names
@@ -85,7 +84,7 @@ def build_mixed_dataset(parts, tokenizer, type_training) :
             sampled,
             tokenizer,
             dataset_name=part["dataset_name"],
-            type_trn=type_training
+            type_training=type_training
         )
 
         formatted_sets.append(formatted)
@@ -112,12 +111,12 @@ def build_t1_set(tokenizer, type_training):
             {
                 "dataset": gsm8k_set_train,
                 "dataset_name": "gsm8k",
-                "n_samples": int(total * 0.70),
+                "n_samples": int(total * 0.40),
             },
             {
                 "dataset": math_lvl_1_2,
                 "dataset_name": "math",
-                "n_samples": int(total * 0.30),
+                "n_samples": int(total * 0.60),
             },
         ],
         tokenizer=tokenizer, 
@@ -140,12 +139,12 @@ def build_t2_set(tokenizer, type_training):
             {
                 "dataset": math_lvl_1_2,
                 "dataset_name": "math",
-                "n_samples": int(total * 0.60),
+                "n_samples": int(total * 0.30),
             },
             {
                 "dataset": math_lvl_3,
                 "dataset_name": "math",
-                "n_samples": int(total * 0.20),
+                "n_samples": int(total * 0.50),
             },
         ],
         tokenizer=tokenizer,
@@ -158,6 +157,7 @@ def build_t3_set(tokenizer, type_training):
     math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
     math_lvl_3 = get_math_lvl(["Level 3"])
     math_lvl_4 = get_math_lvl(["Level 4"])
+    math_lvl_5 = get_math_lvl(["Level 5"])
 
     return build_mixed_dataset(
         parts=[
@@ -169,17 +169,22 @@ def build_t3_set(tokenizer, type_training):
             {
                 "dataset": math_lvl_1_2,
                 "dataset_name": "math",
-                "n_samples": int(total * 0.45),
+                "n_samples": int(total * 0.20),
             },
             {
                 "dataset": math_lvl_3,
                 "dataset_name": "math",
-                "n_samples": int(total * 0.35),
+                "n_samples": int(total * 0.25),
             },
             {
                 "dataset": math_lvl_4,
                 "dataset_name": "math",
-                "n_samples": int(total * 0.10),
+                "n_samples": int(total * 0.30),
+            },
+            {
+                "dataset": math_lvl_5,
+                "dataset_name": "math",
+                "n_samples": int(total * 0.15),
             },
         ],
         tokenizer=tokenizer, 
