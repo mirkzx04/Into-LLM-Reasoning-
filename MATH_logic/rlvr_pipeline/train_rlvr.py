@@ -29,6 +29,7 @@ TRAIN_SPLIT = ["T1", "T2", "T3"]
 def main():
     # Configuration of GRPO 
     training_args = GRPOConfig(
+        output_dir="GRPO_Trainings",
         learning_rate=2e-6,
 
         per_device_train_batch_size=4,
@@ -59,7 +60,9 @@ def main():
         deepspeed="ds_config.json",
         
         eval_strategy='epoch',
-        save_strategy='best', 
+        save_strategy='steps',
+        save_steps=50, 
+
         load_best_model_at_end=True,
         num_train_epochs=2
     )
