@@ -27,9 +27,9 @@ def safe_verify(pred, gt):
     try:
         pred_parsed = parse(pred)
         gt_parsed = parse(gt)
-        return 1.0 if (pred_parsed is not None and gt_parsed is not None and verify(pred_parsed, gt_parsed)) else 0.0
+        return 1.0 if (pred_parsed is not None and gt_parsed is not None and verify(pred_parsed, gt_parsed)) else -0.01
     except Exception:
-        return -0.5
+        return -0.01
 
 def format_reward(completions, **kwargs):
     """
@@ -66,7 +66,7 @@ def format_reward(completions, **kwargs):
         in zip(one_answer, answer_matches, suffixes, step_counts, prefix_compact, blocks_compact)
     ]
 
-def concise_accuracy_reward(completions, complestion_ids, solution, trainer_state, **kwargs):
+def concise_accuracy_reward(completions, completion_ids, solution, trainer_state, **kwargs):
     """
     Assigns a reward based on accuracy, with a bonus for more concise completions.
     Bonus strength gradually increases over the training steps.
@@ -91,7 +91,7 @@ def concise_accuracy_reward(completions, complestion_ids, solution, trainer_stat
     correct_flags = [safe_verify(pred, gt) for pred, gt in zip(pred_txt, gt_txt)]
     
     # Calculate length bonus for each completion
-    bonuses = [concise_bonus(len(ids), target_len = 512, fade_span = 300, hard_cap = 1024) for ids in complestion_ids]
+    bonuses = [concise_bonus(len(ids), target_len = 512, fade_span = 300, hard_cap = 1024) for ids in completion_ids]
 
     # Combine accuracy logic with the scaled bonus
     return[alpha * bonus if correct else 0.0 for correct, bonus in zip(correct_flags, bonuses)]
