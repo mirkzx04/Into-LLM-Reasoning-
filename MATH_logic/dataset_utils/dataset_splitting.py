@@ -11,7 +11,8 @@ sys.path.append(project_root)
 
 from datasets import load_dataset, concatenate_datasets
 
-from MATH_logic.dataset_utils.dataset_formatting import format_sft_example, format_rlvr_example
+from MATH_logic.dataset_utils.dataset_formatting import (format_sft_example, 
+format_rlvr_example, add_prompt_ids)
 
 # Configuration: RNG seed, split sizes, and problem filtering criteria
 SEED = 42
@@ -83,12 +84,17 @@ def sample_dataset(dataset, n_samples):
 
 def format_dataset(dataset, tokenizer, dataset_name, mode):
     """Applies specific prompt formatting to the dataset based on the training mode (SFT or RLVR)."""
+    
+    if "prompt_id" not in dataset.column_names : 
+        dataset = add_prompt_ids(dataset, seed = SEED)
+
     if mode == "sft" :
         return dataset.map(
             lambda example: format_sft_example(
                 example,
                 tokenizer,
-                dataset_name=dataset_name
+                dataset_name=dataset_name, 
+                prompt_id=example["prompt_id"]
             ),
             remove_columns=dataset.column_names
         )
@@ -96,7 +102,8 @@ def format_dataset(dataset, tokenizer, dataset_name, mode):
         return dataset.map(
             lambda example: format_rlvr_example(
                 example,
-                dataset_name=dataset_name
+                dataset_name=dataset_name, 
+                prompt_id=example["prompt_id"]
             ),
             remove_columns=dataset.column_names
         )
