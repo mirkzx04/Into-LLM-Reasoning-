@@ -7,7 +7,7 @@ sys.path.append(project_root)
 os.environ["WANDB_SILENT"] = "true"
 
 from models.model import get_model, get_tokenizer
-from MATH_logic.dataset_utils.dataset_splitting import build_numina_train, build_t1_set, build_t2_set, build_t3_set
+from MATH_logic.dataset_utils.dataset_splitting import build_train_val_dataset
 
 from trl import SFTTrainer, SFTConfig
 
@@ -66,43 +66,28 @@ stft_args = SFTConfig(
     deepspeed="ds_config.json"
 )
 
-for split in TRAIN_SPLIT:
-    if split == "numina" :
-        model = get_model()
-        tokenizer = get_tokenizer()
+model = get_model()
+tokenizer = get_tokenizer()
 
-        dataset_train, dataset_val = build_numina_train(tokenizer)
-    else:
-        model = get_model(SFTT_PTH)
-        tokenizer = get_tokenizer(SFTT_PTH)
+dataset_train, dataset_val = build_train_val_dataset(tokenizer, training="sft")
 
-        if split == "T1":
-            dataset_train, dataset_val = build_t1_set(tokenizer)
-        elif split == "T2":
-            dataset_train, dataset_val = build_t2_set(tokenizer)
-        elif split == "T3":
-            dataset_train, dataset_val = build_t3_set(tokenizer)
-        else:
-            raise ValueError(f"Unknown split: {split}")
+run_name = f"_Run1"
+wandb.init(
+    project='Into LLM Reasoning',
+    name=f'[MATH SFTT] : {run_name}'
+)
 
+# Init the SFTT trainer
+trainer = SFTTrainer(
+    model = model, 
+    train_dataset = dataset_train,
+    eval_dataset=dataset_val,
+    args = stft_args,
+    compute_metrics=compute_metrics,
+    preprocess_logits_for_metrics=process_logits_for_metrics
+)
 
-    run_name = f"[{split}]_Run1"
-    wandb.init(
-        project='Into LLM Reasoning',
-        name=f'[MATH SFTT] : {run_name}'
-    )
-
-    # Init the SFTT trainer
-    trainer = SFTTrainer(
-        model = model, 
-        train_dataset = dataset_train,
-        eval_dataset=dataset_val,
-        args = stft_args,
-        compute_metrics=compute_metrics,
-        preprocess_logits_for_metrics=process_logits_for_metrics
-    )
-
-    trainer.train()
-    trainer.accelerator.wait_for_everyone()
-    trainer.save_model(SFTT_PTH)
-    wandb.finish()
+trainer.train()
+trainer.accelerator.wait_for_everyone()
+trainer.save_model(SFTT_PTH)
+wandb.finish()
