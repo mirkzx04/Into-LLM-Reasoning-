@@ -1,6 +1,11 @@
 
+"""
+Pipelines for loading, filtering, formatting, and splitting mathematical 
+reasoning datasets (GSM8K, MATH, MetaMath) for model training.
+"""
 import os 
 import sys
+import re
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
 sys.path.append(project_root)
 
@@ -8,29 +13,66 @@ from datasets import load_dataset, concatenate_datasets
 
 from MATH_logic.dataset_utils.dataset_formatting import format_sft_example, format_rlvr_example
 
-NUMINA_PERCENT = 0.1
-
+# Configuration: RNG seed, split sizes, and problem filtering criteria
 SEED = 42
 TEST_SIZE = 0.1
 
 NUMINA_SAMPLES = 80_000
 
-T1_TOTAL_SAMPLES = 20_000
-T2_TOTAL_SAMPLES = 30_000
-T3_TOTAL_SAMPLES = 40_000
+TRAIN_LEVELS = ["Level 1", "Level 2", "Level 3", "Level 4"]
+TRAIN_TYPES = ["Intermediate Algebra", "Number Theory", "Prealgebra", "Precalculus"]
 
-numina_set_train = load_dataset("AI-MO/NuminaMath-CoT", split = "train")
-gsm8k_set_train = load_dataset("openai/gsm8k", "main", split = "train")
-math_set_train = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default", split = "train")
+OOD_LEVELS = ["Level 5"]
+OOD_TYPES = ["Algebra", "Counting & Probability", "Geometry"]
 
-def get_math_lvl(levels) : 
-    return  math_set_train.filter(lambda x : x["level"] in levels)
+# Load raw datasets and standardize column names
+numina_set = load_dataset("AI-MO/NuminaMath-CoT")
+gsm8k_set = (
+    load_dataset("openai/gsm8k", "main")
+    .rename_columns({"question" : "problem", "answer" : "solution"})
+)
+math_set = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default")
+metamath_train = (
+    load_dataset("meta-math/MetaMathQA", split="train")
+    .remove_columns({"query" : "problem", "response" : "solution"})
+)
+
+def normalize_txt(x) :
+    """Normalizes text by removing extra whitespaces for exact string matching."""
+    return re.sub(r"\s+", " ", str(x)).strip()
+
+math_train_rows = math_set["train"]
+
+# Precompute a lookup table to quickly access MATH examples metadata
+MATH_LOOKUP = {
+    normalize_txt(row["problem"]): {
+        "level": row["level"],
+        "type": row["type"],
+    }
+    for row in math_train_rows
+}
+
+def filter_math(example, levels, types):
+    """Filters MATH dataset examples based on specified difficulty levels and types."""
+    return example["level"] in levels and example["type"] in types
+
+def filter_metamath(example, levels, types) : 
+    """Filters MetaMath examples by retrieving their original MATH metadata."""
+    original = normalize_txt(example.get("original_question", ""))
+    meta = MATH_LOOKUP.get(original)
+
+    if meta is None:
+        return False
+
+    return meta["level"] in levels and meta["type"] in types
 
 def split_train_val(dataset) : 
+    """Splits a pre-shuffled dataset into training and validation sets."""
     split = dataset.train_test_split(test_size=TEST_SIZE, seed=SEED)
     return split["train"], split["test"]
 
 def sample_dataset(dataset, n_samples):
+    """Randomly subsamples a specific number of instances from a dataset."""
     n_samples = min(n_samples, len(dataset))
 
     return (
@@ -39,8 +81,9 @@ def sample_dataset(dataset, n_samples):
         .select(range(n_samples))
     )
 
-def format_dataset(dataset, tokenizer, dataset_name, type_training):
-    if type_training == "sft" :
+def format_dataset(dataset, tokenizer, dataset_name, mode):
+    """Applies specific prompt formatting to the dataset based on the training mode (SFT or RLVR)."""
+    if mode == "sft" :
         return dataset.map(
             lambda example: format_sft_example(
                 example,
@@ -49,7 +92,7 @@ def format_dataset(dataset, tokenizer, dataset_name, type_training):
             ),
             remove_columns=dataset.column_names
         )
-    if type_training == "rlvr" :  
+    if mode == "rlvr" :  
         return dataset.map(
             lambda example: format_rlvr_example(
                 example,
@@ -57,25 +100,11 @@ def format_dataset(dataset, tokenizer, dataset_name, type_training):
             ),
             remove_columns=dataset.column_names
         )
+    
+    raise ValueError(f"Unknown mode: {mode}")
 
-def build_mixed_dataset(parts, tokenizer, type_training) :
-    """
-        parts format:
-
-        [
-            {
-                "dataset": gsm8k_set_train,
-                "dataset_name": "gsm8k",
-                "n_samples": 14000,
-            },
-            {
-                "dataset": math_lvl_1_2,
-                "dataset_name": "math",
-                "n_samples": 6000,
-            },
-        ]
-    """
-     
+def build_mixed_dataset(parts, tokenizer, training) :
+    """Samples, formats, mixes, and splits multiple dataset parts into a unified train/val set."""
     formatted_sets = []
     for part in parts : 
         sampled = sample_dataset(part["dataset"], part["n_samples"])
@@ -84,7 +113,7 @@ def build_mixed_dataset(parts, tokenizer, type_training) :
             sampled,
             tokenizer,
             dataset_name=part["dataset_name"],
-            type_training=type_training
+            training=training
         )
 
         formatted_sets.append(formatted)
@@ -92,101 +121,68 @@ def build_mixed_dataset(parts, tokenizer, type_training) :
     mixed = concatenate_datasets(formatted_sets)
     mixed = mixed.shuffle(seed=SEED)
 
-    return split_train_val(mixed)
-    
+    split = split_train_val(mixed)
 
-def build_numina_train(tokenizer):
-    numina_set = sample_dataset(numina_set_train, NUMINA_SAMPLES)
-    numina_set = format_dataset(numina_set, tokenizer, dataset_name="numina")
+    return split["train"], split["test"]
 
-    return split_train_val(numina_set)
-
-def build_t1_set(tokenizer, type_training):
-    total = T1_TOTAL_SAMPLES
-
-    math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
-
-    return build_mixed_dataset(
-        parts=[
-            {
-                "dataset": gsm8k_set_train,
-                "dataset_name": "gsm8k",
-                "n_samples": int(total * 0.40),
-            },
-            {
-                "dataset": math_lvl_1_2,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.60),
-            },
-        ],
-        tokenizer=tokenizer, 
-        type_training = type_training
+def build_train_val_dataset(tokenizer, training):
+    """Builds the main training mix combining filtered subsets of GSM8K, MATH, and MetaMath."""
+    gsm_train = gsm8k_set["train"]
+    math_train = math_set["train"].filter(
+        lambda x : filter_math(x, TRAIN_LEVELS, TRAIN_TYPES)
+    )
+    metamath_filtered = metamath_train.filter(
+        lambda x : filter_metamath(x, TRAIN_LEVELS, TRAIN_TYPES)
     )
 
-def build_t2_set(tokenizer, type_training):
-    total = T2_TOTAL_SAMPLES
+    parts = [
+        {
+            "dataset": gsm_train,
+            "dataset_name": "gsm8k",
+            "n_samples": None,
+        },
+        {
+            "dataset": math_train,
+            "dataset_name": "math",
+            "n_samples": None,
+        },
+        {
+            "dataset": metamath_filtered,
+            "dataset_name": "metamath",
+            "n_samples": 20_000,
+        },
+    ]
 
-    math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
-    math_lvl_3 = get_math_lvl(["Level 3"])
+    return build_mixed_dataset(parts=parts, tokenizer=tokenizer, training=training)
 
-    return build_mixed_dataset(
-        parts=[
-            {
-                "dataset": gsm8k_set_train,
-                "dataset_name": "gsm8k",
-                "n_samples": int(total * 0.20),
-            },
-            {
-                "dataset": math_lvl_1_2,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.30),
-            },
-            {
-                "dataset": math_lvl_3,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.50),
-            },
-        ],
-        tokenizer=tokenizer,
-        type_training = type_training
+def build_ood_eval_dataset(tokenizer, mode="rlvr") :
+    """Constructs an Out-Of-Distribution evaluation dataset for testing generalization."""
+    gsm_tst = gsm8k_set["test"]
+
+    math_ood = math_set["train"].filter(
+        lambda x : filter_math(x, OOD_LEVELS, OOD_TYPES)
     )
 
-def build_t3_set(tokenizer, type_training):
-    total = T3_TOTAL_SAMPLES
+    parts = [{
+        {
+            "dataset": gsm_tst,
+            "dataset_name": "gsm8k",
+        },
+        {
+            "dataset": math_ood,
+            "dataset_name": "math",
+        },
+    }]
 
-    math_lvl_1_2 = get_math_lvl(["Level 1", "Level 2"])
-    math_lvl_3 = get_math_lvl(["Level 3"])
-    math_lvl_4 = get_math_lvl(["Level 4"])
-    math_lvl_5 = get_math_lvl(["Level 5"])
+    formatted_sets = []
 
-    return build_mixed_dataset(
-        parts=[
-            {
-                "dataset": gsm8k_set_train,
-                "dataset_name": "gsm8k",
-                "n_samples": int(total * 0.10),
-            },
-            {
-                "dataset": math_lvl_1_2,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.20),
-            },
-            {
-                "dataset": math_lvl_3,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.25),
-            },
-            {
-                "dataset": math_lvl_4,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.30),
-            },
-            {
-                "dataset": math_lvl_5,
-                "dataset_name": "math",
-                "n_samples": int(total * 0.15),
-            },
-        ],
-        tokenizer=tokenizer, 
-        type_training=type_training
-    )
+    for part in parts:
+        ds = format_dataset(
+            part["dataset"],
+            tokenizer,
+            dataset_name=part["dataset_name"],
+            mode=mode,
+        )
+        formatted_sets.append(ds)
+
+    return concatenate_datasets(formatted_sets).shuffle(seed=SEED)

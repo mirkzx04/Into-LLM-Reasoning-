@@ -76,6 +76,29 @@ def extract_math_answer(solution: str):
 
     return solution, None
 
+def extract_metamath_answer(solution: str):
+    solution = str(solution).strip()
+
+    if "####" in solution:
+        reasoning, final = solution.rsplit("####", 1)
+        final = final.strip()
+
+        final = re.split(r"\s+The answer is:\s*", final)[-1].strip()
+        final = final.strip(". ")
+
+        return reasoning.strip(), final
+
+    m = re.search(r"The answer is:\s*([^\n\.]+)", solution)
+    if m:
+        return solution, m.group(1).strip()
+
+    boxed = extract_last_boxed(solution)
+    if boxed is not None:
+        reasoning = BOXED_RE.sub("", solution).strip()
+        return reasoning, boxed
+
+    return solution, None
+
 
 def build_tagged_completion(reasoning: str, final_answer: str):
     """Wraps reasoning and the final answer within specific XML-like tags."""
@@ -102,6 +125,8 @@ def convert_solution_to_tagged_completion(solution: str, dataset_name: str = "ma
 
     if dataset_name in ["gsm8k", "openai/gsm8k"]:
         reasoning, final_answer = extract_gsm8k_answer(solution)
+    elif dataset_name in ["metamath", "meta-math/metamathqa"]:
+        reasoning, final_answer = extract_metamath_answer(solution)
     else:
         reasoning, final_answer = extract_math_answer(solution)
 
@@ -130,20 +155,8 @@ def format_sft_example(example, tokenizer=None, dataset_name: str = "math"):
     dataset_name = dataset_name.lower()
 
     # Map column names depending on the source dataset
-    if dataset_name in ["gsm8k", "openai/gsm8k"]:
-        problem = example["question"]
-        raw_solution = example["answer"]
-
-    elif dataset_name in ["math", "math-lighteval", "digitallearninggmbh/math-lighteval"]:
-        problem = example["problem"]
-        raw_solution = example["solution"]
-
-    elif dataset_name in ["numina", "numinamath", "ai-mo/numinamath-cot"]:
-        problem = example["problem"]
-        raw_solution = example["solution"]
-
-    else:
-        raise ValueError(f"Unknown dataset_name: {dataset_name}")
+    problem = example["problem"]
+    raw_solution = example["solution"]
 
     # Generate model target
     completion = convert_solution_to_tagged_completion(
@@ -177,19 +190,14 @@ def format_rlvr_example(example, dataset_name: str = "math"):
 
     # Dispatch to specific logic according to dataset mappings
     if dataset_name in ["gsm8k", "openai/gsm8k"]:
-        problem = example["question"]
-        _, final_answer = extract_gsm8k_answer(example["answer"])
-
-    elif dataset_name in ["math", "math-lighteval", "digitallearninggmbh/math-lighteval"]:
         problem = example["problem"]
-        _, final_answer = extract_math_answer(example["solution"])
-
-    elif dataset_name in ["numina", "numinamath", "ai-mo/numinamath-cot"]:
+        _, final_answer = extract_gsm8k_answer(example["solution"])
+    elif dataset_name in ["metamath", "meta-math/metamathqa"]:
         problem = example["problem"]
-        _, final_answer = extract_math_answer(example["solution"])
-
+        _, final_answer = extract_metamath_answer(example["solution"])
     else:
-        raise ValueError(f"Unknown dataset_name: {dataset_name}")
+        problem = example["problem"]
+        _, final_answer = extract_math_answer(example["solution"])
 
     if final_answer is None:
         final_answer = "UNKNOWN"
