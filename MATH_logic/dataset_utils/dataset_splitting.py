@@ -94,7 +94,7 @@ def format_dataset(dataset, tokenizer, dataset_name, mode):
         return dataset.map(
             lambda example: format_sft_example(
                 example,
-                tokenizer,
+                tokenizer=tokenizer,
                 dataset_name=dataset_name, 
                 prompt_id=example["prompt_id"]
             ),
@@ -122,7 +122,7 @@ def build_mixed_dataset(parts, tokenizer, training) :
             sampled,
             tokenizer,
             dataset_name=part["dataset_name"],
-            training=training
+            mode=training
         )
 
         formatted_sets.append(formatted)
