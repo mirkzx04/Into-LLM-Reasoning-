@@ -170,7 +170,7 @@ def build_ood_eval_dataset(tokenizer, mode="rlvr") :
         lambda x : filter_math(x, OOD_LEVELS, OOD_TYPES)
     )
 
-    parts = [{
+    parts = [
         {
             "dataset": gsm_tst,
             "dataset_name": "gsm8k",
@@ -179,7 +179,7 @@ def build_ood_eval_dataset(tokenizer, mode="rlvr") :
             "dataset": math_ood,
             "dataset_name": "math",
         },
-    }]
+    ]
 
     formatted_sets = []
 
