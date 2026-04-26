@@ -130,9 +130,7 @@ def build_mixed_dataset(parts, tokenizer, training) :
     mixed = concatenate_datasets(formatted_sets)
     mixed = mixed.shuffle(seed=SEED)
 
-    split = split_train_val(mixed)
-
-    return split["train"], split["test"]
+    return split_train_val(mixed)
 
 def build_train_val_dataset(tokenizer, training):
     """Builds the main training mix combining filtered subsets of GSM8K, MATH, and MetaMath."""
