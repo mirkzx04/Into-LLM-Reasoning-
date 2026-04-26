@@ -16,7 +16,7 @@ format_rlvr_example, add_prompt_ids)
 
 # Configuration: RNG seed, split sizes, and problem filtering criteria
 SEED = 42
-TEST_SIZE = 0.1
+TEST_SIZE = 0.01
 
 NUMINA_SAMPLES = 80_000
 
@@ -35,7 +35,7 @@ gsm8k_set = (
 math_set = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default")
 metamath_train = (
     load_dataset("meta-math/MetaMathQA", split="train")
-    .remove_columns({"query" : "problem", "response" : "solution"})
+    .rename_columns({"query" : "problem", "response" : "solution"})
 )
 
 def normalize_txt(x) :
@@ -72,15 +72,17 @@ def split_train_val(dataset) :
     split = dataset.train_test_split(test_size=TEST_SIZE, seed=SEED)
     return split["train"], split["test"]
 
-def sample_dataset(dataset, n_samples):
-    """Randomly subsamples a specific number of instances from a dataset."""
-    n_samples = min(n_samples, len(dataset))
+def sample_dataset(dataset, n_samples=None):
+    """Randomly subsamples a specific number of instances from a dataset.
+    If n_samples is None, keeps the full dataset.
+    """
+    dataset = dataset.shuffle(seed=SEED)
 
-    return (
-        dataset
-        .shuffle(seed=SEED)
-        .select(range(n_samples))
-    )
+    if n_samples is None:
+        return dataset
+
+    n_samples = min(int(n_samples), len(dataset))
+    return dataset.select(range(n_samples))
 
 def format_dataset(dataset, tokenizer, dataset_name, mode):
     """Applies specific prompt formatting to the dataset based on the training mode (SFT or RLVR)."""
