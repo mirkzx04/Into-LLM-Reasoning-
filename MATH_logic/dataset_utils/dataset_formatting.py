@@ -7,31 +7,31 @@ PROMPT_TEMPLATES = [
     (
         "Solve this math problem step by step.\n"
         "Write each reasoning step inside <reasoning:step>...</reasoning:step> tags.\n"
-        "At the end, put the final answer inside <answer>\\boxed{...}</answer>.\n"
+        "At the end, put the final answer inside <answer>\\boxed{{...}}</answer>.\n"
         "Problem: {problem}\n"
     ),
     (
         "You are given a math problem. Reason carefully and solve it step by step.\n"
         "Every reasoning step must be enclosed in <reasoning:step>...</reasoning:step> tags.\n"
-        "Return the final answer only inside <answer>\\boxed{...}</answer>.\n"
+        "Return the final answer only inside <answer>\\boxed{{...}}</answer>.\n"
         "Problem: {problem}\n"
     ),
     (
         "Work through the following problem using explicit mathematical reasoning.\n"
         "Use one or more <reasoning:step>...</reasoning:step> blocks for the solution.\n"
-        "Finish with <answer>\\boxed{...}</answer> and nothing after it.\n"
+        "Finish with <answer>\\boxed{{...}}</answer> and nothing after it.\n"
         "Problem: {problem}\n"
     ),
     (
         "Find the answer to the math problem below.\n"
         "Show the reasoning using <reasoning:step>...</reasoning:step> tags.\n"
-        "The final result must be written as <answer>\\boxed{...}</answer>.\n"
+        "The final result must be written as <answer>\\boxed{{...}}</answer>.\n"
         "Problem: {problem}\n"
     ),
     (
         "Solve the following mathematical question.\n"
         "Put each logical step inside <reasoning:step>...</reasoning:step>.\n"
-        "Put the final answer inside <answer>\\boxed{...}</answer>.\n"
+        "Put the final answer inside <answer>\\boxed{{...}}</answer>.\n"
         "Problem: {problem}\n"
     ),
 ]
