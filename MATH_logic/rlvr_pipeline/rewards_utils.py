@@ -22,14 +22,14 @@ def last_boxes(txt):
 def safe_verify(pred, gt):
     """
     Safely parses and verifies the predicted answer against the ground truth.
-    Returns 1.0 for a match, 0.0 for a mismatch, and -0.5 if parsing fails.
+    Returns 1.0 for a match, 0.0 for a mismatch, and -0.05 if parsing fails.
     """
     try:
         pred_parsed = parse(pred)
         gt_parsed = parse(gt)
-        return 1.0 if (pred_parsed is not None and gt_parsed is not None and verify(pred_parsed, gt_parsed)) else -0.01
+        return 1.0 if (pred_parsed is not None and gt_parsed is not None and verify(pred_parsed, gt_parsed)) else 0.0
     except Exception:
-        return -0.01
+        return -0.05
 
 def format_reward(completions, **kwargs):
     """
@@ -88,7 +88,7 @@ def concise_accuracy_reward(completions, completion_ids, solution, trainer_state
     gt_txt = [last_boxes(s_txt) for s_txt in solution]
 
     # Verify accuracy
-    correct_flags = [safe_verify(pred, gt) for pred, gt in zip(pred_txt, gt_txt)]
+    correct_flags = [safe_verify(pred, gt) == 1.0 for pred, gt in zip(pred_txt, gt_txt)]
     
     # Calculate length bonus for each completion
     bonuses = [concise_bonus(len(ids), target_len = 512, fade_span = 300, hard_cap = 1024) for ids in completion_ids]

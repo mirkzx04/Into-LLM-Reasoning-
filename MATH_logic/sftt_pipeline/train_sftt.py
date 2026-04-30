@@ -12,7 +12,6 @@ from MATH_logic.dataset_utils.dataset_splitting import build_train_val_dataset
 from trl import SFTTrainer, SFTConfig
 
 SFTT_PTH = "sftt_model_math"
-TRAIN_SPLIT = ["numina", "T1", "T2", "T3"]
 
 def process_logits_for_metrics(logits, labels):
     if isinstance(logits, tuple): 
@@ -46,7 +45,7 @@ stft_args = SFTConfig(
 
     per_device_train_batch_size = 10,
     gradient_accumulation_steps = 10, 
-    num_train_epochs=1,
+    num_train_epochs=0.5,
 
     bf16=True,
     gradient_checkpointing=True,
@@ -58,7 +57,9 @@ stft_args = SFTConfig(
     logging_strategy='steps',
     logging_steps=2,
 
-    eval_strategy='epoch',
+    eval_strategy='steps',
+    eval_steps=50,
+
     save_strategy='steps',
     save_steps=50, 
 

@@ -20,7 +20,7 @@ from MATH_logic.dataset_utils.dataset_splitting import build_train_val_dataset
 from trl import GRPOTrainer, GRPOConfig
 
 device = "cuda" if th.cuda.is_available() else "cpu"
-SFTT_PTH = "sftt_numina"
+SFTT_PTH = "sftt_model_math"
 
 def main():
     # Configuration of GRPO 
@@ -30,29 +30,30 @@ def main():
 
         mask_truncated_completions=True,
 
-        per_device_train_batch_size=6,
-        per_device_eval_batch_size=6,
+        per_device_train_batch_size=10,
+        per_device_eval_batch_size=10,
         gradient_accumulation_steps=20,
 
-        num_generations=6,
-        max_completion_length = 2048,
-        beta = 0.01,
+        num_generations=10,
+        max_completion_length = 1500,
+        beta = 0.0,
         temperature=0.7,
+        top_p=0.95,
 
         scale_rewards="batch",
-        loss_type="dr_grpo",
-        reward_weights=[1.0, 0.15],
+        loss_type="dapo",
+        reward_weights=[1.0, 0.03],
 
         report_to = 'wandb',
         logging_strategy='steps',
-        logging_steps=2,
+        logging_steps=5,
 
         bf16=True,
         gradient_checkpointing=True,
         
         use_vllm=True,
         vllm_gpu_memory_utilization=0.2,
-        vllm_max_model_length=4096,
+        vllm_max_model_length=2000,
 
         use_liger_kernel=True,
         deepspeed="ds_config.json",
@@ -70,9 +71,9 @@ def main():
     model = get_model(SFTT_PTH)
     tokenizer = get_tokenizer(SFTT_PTH)
 
-    dataset_train, dataset_val = build_train_val_dataset(tokenizer, training="rlvrs")
+    dataset_train, dataset_val = build_train_val_dataset(tokenizer, training="rlvr")
     
-    run_name = f" : Run1"
+    run_name = f" Run 2 [Scale Rewards : None - Temp piu bassa - Peso Formato piu basso]"
     wandb.init(
         project='Into LLM Reasoning',
         name=f'[MATH RLVR] : {run_name}'
