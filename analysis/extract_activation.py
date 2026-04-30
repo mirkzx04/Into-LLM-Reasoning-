@@ -11,19 +11,23 @@ from transformers import AutoConfig
 from transformer_lens import HookedTransformer
 from pathlib import Path
 
-from models.model_wrapper import load_merged_model
 from models.model import MODEL_ID, get_model, get_tokenizer
 
 # seting models dir and device
 device = 'cuda' if th.cuda.is_available() else 'cpu'
 
-ADAPTER_DIR = 'adapters'
-RLVR_ADAPTER_DIR = f'{ADAPTER_DIR}/rlvr_GMS8K_adapter'
-SFTT_ADAPTER_DIR = f'{ADAPTER_DIR}/sftt_GMS8K_adapter'
+SFT_PTH = "sftt_model_math"
+RLVR_PTH = "rlvr_model_math"
 
-hf_base = get_model().to(device).eval()
-hf_sftt = load_merged_model(SFTT_ADAPTER_DIR).to(device).eval()
-hf_rlvr = load_merged_model(RLVR_ADAPTER_DIR).to(device).eval()
+# Instance models
+hf_base = get_model()
+base_tokenizer = get_tokenizer()
+
+hf_sftt = get_model(SFT_PTH)
+sft_tokenizer = get_tokenizer(SFT_PTH)
+
+hf_rlvr = get_model(RLVR_PTH)
+rlvr_tokenizer = get_tokenizer(RLVR_PTH)
 
 tokenizer = get_tokenizer()
 
@@ -34,6 +38,9 @@ base_tl = HookedTransformer.from_pretrained_no_processing(
     device = device,
     dtype=th.bfloat16,
 )
+del hf_base
+th.cuda.empty_cache()
+
 sff_tl = HookedTransformer.from_pretrained_no_processing(
     MODEL_ID,
     hf_model = hf_sftt,
@@ -41,6 +48,9 @@ sff_tl = HookedTransformer.from_pretrained_no_processing(
     device = device,
     dtype=th.bfloat16,
 )
+del hf_sftt
+th.cuda.empty_cache()
+
 rlvr_tl = HookedTransformer.from_pretrained_no_processing(
     MODEL_ID,
     hf_model = hf_rlvr,
@@ -48,6 +58,8 @@ rlvr_tl = HookedTransformer.from_pretrained_no_processing(
     device = device,
     dtype=th.bfloat16,
 )
+del hf_rlvr
+th.cuda.empty_cache()
 
 models = [
     (base_tl, 'base'), 
@@ -65,68 +77,30 @@ def forward_with_cache(model, prompts, last_token, names_filter = None):
 
     return cache
 
-def extract_mlp_attn_out(prompts, last_token = True):
-    attn_outputs = {}
-    mlp_outputs = {}
+def get_hooks(interesting_layers, blocks):
+    return [
+        f"blocks.{l}.{b}"
+        for l in interesting_layers
+        for b in blocks
+    ]
 
+def extract_mlp_attn_out(prompts, interesting_layers, blocks, last_token = True):
     models_act = {}
 
-    for couple in models:
-        model = couple[0]
-        model_name = couple[1]
-        n_layers = model.cfg.n_layers
-
-        model_cache = forward_with_cache(model, prompts, last_token)
-
-        # Extract attn and mlp representation for each layers
-        for l in range(n_layers):
-            # Shape : [B, d_model] or [B, pos, d_mod]
-            attn_out = model_cache['attn_out', l].detach().cpu()
-            mlp_out = model_cache['mlp_out', l].detach().cpu()
-        
-            attn_outputs[l] = attn_out
-            mlp_outputs[l] = mlp_out
-
-        models_act[model_name] = {
-            'mlp_act' : mlp_outputs, 
-            'attn_act' : attn_outputs
-        }
-
-        attn_outputs = {}
-        mlp_outputs = {}
-
-    return models_act
-
-def extract_residual_out(prompts, last_token = True):
-    model_residuals = {}
+    hook_names = get_hooks(interesting_layers, blocks)
 
     for model, model_name in models:
-        n_layers = model.cfg.n_layers
-        interesting_layers = [0, n_layers // 2, n_layers - 1]
-
-        hook_names =[]
-        for l in interesting_layers:
-            hook_names.append(f'blocks.{l}.hook_resid_pre')
-            hook_names.append(f'blocks.{l}.hook_resid_mid')
-            hook_names.append(f'blocks.{l}.hook_resid_post')
-
         model_cache = forward_with_cache(model, prompts, last_token, hook_names)
-        
-        resid_pre_outs = {}
-        resid_attn_outs = {}
-        resid_attn_mlp_outs = {}
+        layer_act = {}
 
+        # Extract activation
         for l in interesting_layers:
+            # Shape : [B, d_model] or [B, pos, d_mod]
+            layer_act[l] = {
+                block : model_cache[f"blocks.{l}.{block}"] 
+                for block in blocks
+            } 
 
-            # Shape : [B, d_model] or [B, pos, d_model]
-            resid_pre_outs[l] = model_cache[f'blocks.{l}.hook_resid_pre'].detach().cpu()
-            resid_attn_outs[l] = model_cache[f'blocks.{l}.hook_resid_mid'].detach().cpu()
-            resid_attn_mlp_outs[l] = model_cache[f'blocks.{l}.hook_resid_post'].detach().cpu()
+        models_act[model_name] = layer_act
 
-        model_residuals[model_name] = {
-            'resid_pre_outs' : resid_pre_outs,
-            'resid_attn_outs' : resid_attn_outs, 
-            'resid_attn_mlp_outs' : resid_attn_mlp_outs
-        }
-
-    return model_residuals
+    return models_act
