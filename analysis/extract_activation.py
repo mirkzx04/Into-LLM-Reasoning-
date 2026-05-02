@@ -5,178 +5,157 @@ sys.path.append(parent_dir)
 
 import torch as th
 
-import models.rope_theta
-
 from transformers import AutoConfig
 from transformer_lens import HookedTransformer
-from tqdm import tqdm
 
-from models.model import MODEL_ID, get_model, get_tokenizer
+from models.model import get_model, get_tokenizer, MODEL_ID
+from analysis.generation import generate_reasoning
+from analysis.organize_activation import init_activation_store, append_activation, ACTIVATION_BLOCKS
 
-# seting models dir and device
-device = 'cuda' if th.cuda.is_available() else 'cpu'
-
-SFT_PTH = "sftt_model_math"
 RLVR_PTH = "rlvr_model_math"
+SFT_PTH =  "sftf_model_math"
 
-# Instance models
-hf_base = get_model()
-base_tokenizer = get_tokenizer()
+device = "cuda" if th.cuda.is_available() else "cpu"
 
-hf_sftt = get_model(SFT_PTH)
-sft_tokenizer = get_tokenizer(SFT_PTH)
-
-hf_rlvr = get_model(RLVR_PTH)
-rlvr_tokenizer = get_tokenizer(RLVR_PTH)
-
-tokenizer = get_tokenizer()
-
-base_tl = HookedTransformer.from_pretrained_no_processing(
-    MODEL_ID,
-    hf_model = hf_base,
-    tokenizer = tokenizer,
-    device = device,
-    dtype=th.bfloat16,
-)
-del hf_base
-th.cuda.empty_cache()
-
-sff_tl = HookedTransformer.from_pretrained_no_processing(
-    MODEL_ID,
-    hf_model = hf_sftt,
-    tokenizer = tokenizer,
-    device = device,
-    dtype=th.bfloat16,
-)
-del hf_sftt
-th.cuda.empty_cache()
-
-rlvr_tl = HookedTransformer.from_pretrained_no_processing(
-    MODEL_ID,
-    hf_model = hf_rlvr,
-    tokenizer = tokenizer,
-    device = device,
-    dtype=th.bfloat16,
-)
-del hf_rlvr
-th.cuda.empty_cache()
-
-models = [
-    (base_tl, 'base'), 
-    (sff_tl, 'sftt'), 
-    (rlvr_tl, 'rlvr')
-]
-
-def generate_rlvr_reasoning(prompts, max_new_tokens = 2000, do_sample = False, temperature = 0.7, top_p = 0.95, batch_size = 5):
-    prompts_ids = tokenizer(
-        prompts,
-        return_tensor = "pt",
-        add_special_token = False,
-    ).inputs_ids.to(device)
-
-    with th.inference_mode():
-        full_ids = rlvr_tl.generate(
-            prompts_ids,
-            max_new_tokens=max_new_tokens,
-            stop_at_eos=True,
-            do_sample=do_sample,
-            temperature=temperature,
-            top_p=top_p,
-            return_type="tokens",
-            verbose=False
-        )
-
-    completion_ids = full_ids[:, prompts_ids.shape[-1]:]
-    return prompts_ids, completion_ids, full_ids
-
-def get_output_token_position(prompt_len, completion_len, mode):
-    """
-    mode = "state" 
-        Take the positions of the completion tokens already present in the sequence
-
-    mode = "predictive"
-        takes positions that predict completion tokens
-
-    mode = "prompt" 
-        rakes the positions of input tokens
-    """
-    if mode == "state":
-        start = prompt_len
-        end = prompt_len + completion_len
-
-    elif mode == "predictive":
-        start = prompt_len - 1
-        end = prompt_len + completion_len - 1
-    elif mode == "prompt": 
-        start = 0
-        end = prompt_len
-
-    return list(range(start, end))
-
-def forward_with_cache(model, prompts, positions, names_filter = None):
-    with th.no_grad():
+def forward_with_cache(model, inpt, positions, names_filter):
+    with th.no_grad(): 
         _, cache = model.run_with_cache(
-            prompts,
-            names_filter = names_filter,
-            pos_slice = positions
-        ) # Forward with caching to extract representation
-
+            inpt,
+            names_filter=names_filter,
+            pos_slice=positions,
+            return_type=None,
+        )
+            
     return cache
 
-def get_hooks(interesting_layers, blocks):
-    return [
-        f"blocks.{l}.{b}"
-        for l in interesting_layers
-        for b in blocks
-    ]
+def get_activation_position(prompt_len, completion_len):
+    total_len = prompt_len + completion_len
+    
+    # All token states: prompt + completion.
+    return list(range(0, total_len))
 
-def extract_mlp_attn_out(prompts, interesting_layers, blocks, max_new_tokens, generation_do_sample = False, cache_mode = "state"):
-    hook_names = get_hooks(interesting_layers, blocks)
+   
+    
+def build_metadata(generated) :
+    metadata = []
 
-    prompt_ids, completion_ids, full_ids = generate_rlvr_reasoning(
-        prompts=prompts,
-        max_new_tokens=max_new_tokens,
-        do_sample=generation_do_sample
-    ) # Generate
+    sample_ids = generated["sample_id"]
+    prompt_texts = generated["prompt_text"]
+    completion_texts = generated["completion_text"]
+    prompt_tokens = generated["prompt_tokens"]
+    completion_tokens = generated["completion_tokens"]
+    ground_truths = generated.get("ground_truth", [None] * len(prompt_tokens))
 
-    prompt_len = prompt_ids.shape[-1]
-    completion_len = completion_ids.shape[-1]
+    for sample_id, prompt_text, completion_text, p_token, c_token, gt in zip(
+        sample_ids,
+        prompt_texts,
+        completion_texts,
+        prompt_tokens,
+        completion_tokens,
+        ground_truths,
+    ):
+        prompt_len = p_token.shape[-1]
+        completion_len = c_token.shape[-1]
 
-    positions = get_output_token_position(
-        prompt_len=prompt_len,
-        completion_len=completion_len,
-        mode = cache_mode
-    )
-
-    out = {
-        "prompt": prompts,
-        "prompt_ids": prompt_ids.detach().cpu(),
-        "completion_ids": completion_ids.detach().cpu(),
-        "full_ids": full_ids.detach().cpu(),
-        "positions": positions,
-        "cache_mode": cache_mode,
-        "activations": {},
-    }
-
-    for model, model_name in models: 
-        model_cache = forward_with_cache(
-            model = model,
-            input_ids = full_ids,
-            positions=positions,
-            names_filter=hook_names
+        positions = get_activation_position(
+            prompt_len=prompt_len,
+            completion_len=completion_len,
         )
 
-        layer_act = {}
-        for l in interesting_layers:
-            layer_act[l] = {
-                block : model_cache[f"blocks.{l}.{block}"].detach().cpu()
-                for block in blocks
-            }
-        out["activations"][model_name] = layer_act
-    
-        del model_cache
+        full_tokens = th.cat([p_token, c_token], dim=-1)
+
+        metadata.append({
+            "sample_id": int(sample_id),
+            "prompt_text": prompt_text,
+            "completion_text": completion_text,
+            "ground_truth": gt,
+
+            "prompt_tokens": p_token.cpu(),
+            "completion_tokens": c_token.cpu(),
+            "full_tokens": full_tokens.cpu(),
+
+            "prompt_len": int(prompt_len),
+            "completion_len": int(completion_len),
+            "total_len": int(prompt_len + completion_len),
+
+            "positions": positions,
+            "num_positions": len(positions),
+        })
+
+    return metadata
+
+def extract_activation(max_new_tokens, batch_size):
+    model_names = ["base", "sftt", "rlvr"]
+    model_activations = None
+    do_sample = batch_size > 1
+
+    save_path = f"activation_dataset"
+
+    # Generate reasoning 
+    hf_rlvr = get_model(RLVR_PTH)
+    rlvr_tokenizer = get_tokenizer(RLVR_PTH)
+
+    generated = generate_reasoning(hf_rlvr, rlvr_tokenizer, max_new_tokens, do_sample, batch_size)
+    del hf_rlvr
+    th.cuda.empty_cache()
+
+    # Build metadata
+    metadata = build_metadata(generated)
+
+    for model_pth, model_name in [(None, "base"), (SFT_PTH, "sftt"), (RLVR_PTH, "rlvr")]:
+        tl_model =HookedTransformer.from_pretrained(
+            MODEL_ID,
+            hf_model=get_model(model_pth),
+            tokenizer=get_tokenizer(model_pth),
+            device=device,
+            dtype=th.bfloat16
+        ) # Istance transformer lens model
+        num_layers = tl_model.cfg.n_layers
+
+        if model_activations is None:
+            model_activations = init_activation_store(model_names, num_layers)
+        hook_names = [
+             f"blocks.{l}.{hook_name}"
+            for l in range(num_layers)
+            for hook_name in ACTIVATION_BLOCKS.values()
+        ]
+
+        # Get activation
+        for item in metadata:
+            full_tokens = item["full_tokens"].unsqueeze(0).to(device)
+            positions = item["positions"]
+
+            cache = forward_with_cache(
+                model=tl_model,
+                inpt=full_tokens,
+                positions=positions,
+                names_filter=hook_names,
+            )
+
+            append_activation(
+                cache=cache,
+                store=model_activations,
+                model_name=model_name,
+                num_layers=num_layers,
+            )
+
+            del cache
+            th.cuda.empty_cache()
+
+        del tl_model
         th.cuda.empty_cache()
 
-    return out
-
-    
+    if save_path is not None:
+         th.save(
+        {
+            "max_new_tokens": max_new_tokens,
+            "batch_size": batch_size,
+            "do_sample": do_sample,
+            "activation_blocks": ACTIVATION_BLOCKS,
+            "metadata": metadata,
+            "activations": model_activations,
+        },
+        save_path,
+    )
+         
+extract_activation(3000, 50)
