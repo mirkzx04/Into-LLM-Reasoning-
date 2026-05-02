@@ -74,8 +74,6 @@ Since the model already learns the target format during SFT, the format reward i
 The total reward can be written as:
 $R = R_{\text{accuracy}} + 0.01 R_{\text{format}}$ where $R_{\text{accuracy}}$ is the dominant component.
 
-![alt text](image.png)
-
 1. **Generated** : 
 
 # Experiments List
