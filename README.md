@@ -24,6 +24,60 @@ By isolating these internal components, we will study:
 - **Self-Attention**: To evaluate if *RLVR* merely establishes pathways toward the correct answer.
 - **MLP**: To check if *RLVR* alters weights or activations within the feed-forward layers, which would strongly suggest the acquisition of new knowledge/features.
 
+# Training Setup
+
+## Supervised Fine-Tuning
+For the SFT stage, I used the NuminaMath-CoT dataset. This choice is motivated by recent work suggesting that a strong supervised fine-tuning phase is important before applying RLVR, since it provides the model with basic mathematical reasoning patterns, solution structure, and the desired response format.
+
+The SFT model achieves a high `mean_token_accuracy`, which indicates that it has learned to imitate the supervised solutions effectively, including the expected reasoning format and mathematical answer structure. However, this metric should mainly be interpreted as a measure of supervised imitation quality, rather than as direct evidence of robust mathematical generalization.
+
+## RLVR Training
+For the RLVR stage, I constructed a mixed mathematical dataset composed of:
+
+1. GSM8K  
+2. MATH-Lighteval, filtered by specific levels and topics  
+3. DAPO-Math-17k, filtered for sample number
+
+The goal of this dataset mixture is to expose the model to heterogeneous mathematical problems, ranging from grade-school arithmetic reasoning to more diverse competition-style problems. While SFT teaches the model to imitate supervised reasoning traces, RLVR is used to further optimize the model toward solution trajectories that maximize verifiable correctness.
+
+In this sense, RLVR is not assumed to create OOD generalization by itself. Instead, the training setup is designed to test whether reward-based optimization over a heterogeneous dataset can improve both in-distribution accuracy and out-of-distribution generalization.
+
+## RLVR Configuration
+For RLVR training, I used the Hugging Face `trl` library, specifically `GRPOConfig` and `GRPOTrainer`.
+
+The main hyperparameters were:
+
+- learning rate: `2e-6`
+- maximum completion length: `2000`
+- loss type: `dapo`
+
+I used the DAPO loss because the model does not produce extremely long chain-of-thought completions and because completion lengths are relatively variable across samples.
+
+The training setup also used DeepSpeed for memory-efficient distributed optimization and vLLM for faster generation during RLVR sampling.
+
+## Reward Function
+
+The reward function is inspired by the DeepSeek-R1 training setup and combines an accuracy reward with a format reward.
+
+The accuracy reward assigns:
+
+- `+1.0` if the final answer is correct
+- `0.0` otherwise
+
+The format reward assigns:
+
+- `+1.0` if the completion follows the required response format
+- `0.0` otherwise
+
+Since the model already learns the target format during SFT, the format reward is given a small weight of `0.01`. The main objective of RLVR is therefore to maximize mathematical correctness rather than simply reinforce formatting behavior.
+
+The total reward can be written as:
+$R = R_{\text{accuracy}} + 0.01 R_{\text{format}}$ where $R_{\text{accuracy}}$ is the dominant component.
+
+![alt text](image.png)
+
+1. **Generated** : 
+
 # Experiments List
 
 1. **Component-Level Representation Comparison**
@@ -38,36 +92,4 @@ By isolating these internal components, we will study:
     
     To quantify parameter updates, we will compute the $L_2$ norm of the weight differences: $||W_{RLVR} - W_{SFT}||$ and $||W_{RLVR} - W_v||$. To overcome the limitations of $L_2$ orms in overparameterized networks, we will perform Singular Value Decomposition (SVD) on the weight difference matrix $\Delta W$. If *RLVR* primarily acts as a steering mechanism, the weight updates should exhibit a low rank and concentrate in specific routing heads rather than MLP layers.
 
-# Training Setup
 
-We have chosen Qwen2.5-3B and Mistral ## as the model on which the perform our experiments. We have trained them, first train was with Super-Vised Fine-Tuning on GSM-8K, and secondo train was with RLVR on GSM-8K, this is how we got it Qwen2.5-G1-3B and Mistral##. 
-
-## Rewards
-
-We have used three different reward : 
-
-- **Format Reward :** That control if the model output follows the format instruction, give the model $+1$ if the formato is follows, and give the model $-1$ if the format is not follows, we call it $R_f$
-- **Accuracy Reward :** Check if the model answer is mathematics correct, give the model $+1$ if is correct else $0$, we call it $R_a$
-- **Concise-Accuracy Reward :** It is a condional bonus on correcteness that decreases with the lenght of model answer and increases over time through a curriculum. We indicate :
-    - $t$ : as global_step of trainer
-    - $L$ : token-lenght of the completions (model answer)
-    - $y$  : ground-truth
-    - $\hat{y}$ : mathematics model answer
-    
-    Now define the accuracy function as follows : 
-    
-    $$C(\hat{y}, y) = \begin{cases} 1 \text{ if } y = \hat{y} \\ 0 \text{ else} \end{cases}$$
-
-    The reward use a progressive activation, which we have defined as $\alpha(t) = \min(1, \frac{t}{200})$.
-    Now define $L_t$, which is the token-lenght target and $S$, which is fade-span, then we compute $\text{overflow}(L) = max(0, L-L_0)$ and concise bonus $b(L) =max(0, 1 - \frac{\text{overflow}(L)}{S})$. In the end we have $R_{ca} = \alpha(t)C(\hat{y},y)b(L)$
-    
-
-The final reward function is : $R = \lambda_f R_f + \lambda_a R_a + \lambda_{ca} R_{ca}$ that are : $[1.0, 0.2,0.1]$,
-We have used $R_{ca}$ why in the first train, where we have used only $R_f$ and $R_a$, we have noticed an high $cap\_ratio$.
-
-## Training Result
-Training result are was good. The model (Qwen2.5-G1-3B) respect the format and has a good mathematics accuracy
-
-![alt text](readme_imgs/image-1.png) ![alt-text](readme_imgs/image.png)
-
-Also the lenght of answer is good, we have mean_terminated_lenght $\sim  185$, this is means that all model answer has $ \sim 185 $ tokens, the clip_rato $\approx 0$. So now we have a model that solves mathematics discretely.
