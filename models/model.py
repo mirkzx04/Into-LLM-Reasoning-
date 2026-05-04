@@ -27,5 +27,5 @@ def get_model(model_path = None):
     return AutoModelForCausalLM.from_pretrained(
         model_path, 
         torch_dtype = th.bfloat16,
-        attn_implementation = 'sdpa',
+        attn_implementation = 'flash_attention_2',
     )
