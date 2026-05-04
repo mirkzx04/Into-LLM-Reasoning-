@@ -1,12 +1,60 @@
 import os 
 import sys
+import json
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
+
+from tqdm import tqdm
 
 import torch as th
 
 from MATH_logic.dataset_utils.dataset_splitting import build_ood_eval_dataset
 
+def tensor_to_list(x):
+    if isinstance(x, th.Tensor):
+        return x.detach().cpu().tolist()
+    return list(x)
+
+def load_token_dataset(save_path = "token_dataset", filename_prefix = "rlvr_ood_tokens") : 
+    pt_path = os.path.join(save_path, f"{filename_prefix}.pt")
+
+    if os.path.exists(pt_path):
+        return th.load(pt_path, map_location="cpu")
+
+    return None
+
+def save_token_dataset(gen_out, save_path = "token_dataset", filename_prefix = "rlvr_ood_tokens"):
+    os.makedirs(save_path, exist_ok=True)
+
+    pt_path = os.path.join(save_path, f"{filename_prefix}.pt")
+    jsonl_path = os.path.join(save_path, f"{filename_prefix}.jsonl")
+
+    # Saving with torch
+    th.save(gen_out, pt_path)
+
+    # Saving with json
+    n_samples = len(gen_out["sample_id"])
+
+    with open(jsonl_path, "w", encoding="utf-8") as f:
+        for idx in range(n_samples):
+            row = {
+                "sample_id": gen_out["sample_id"][idx],
+                "prompt_text": gen_out["prompt_text"][idx],
+                "completion_text": gen_out["completion_text"][idx],
+                "prompt_tokens": tensor_to_list(gen_out["prompt_tokens"][idx]),
+                "completion_tokens": tensor_to_list(gen_out["completion_tokens"][idx]),
+                "ground_truth": gen_out["ground_truth"][idx],
+                "prompt_len": len(gen_out["prompt_tokens"][idx]),
+                "completion_len": len(gen_out["completion_tokens"][idx]),
+            }
+
+            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+
+    return {
+        "pt_path": pt_path,
+        "jsonl_path": jsonl_path,
+        "num_samples": n_samples,
+    }
 def slice_prompt_pad(prompt_ids, attention_mask):
     """
     prompt_ids : [B, prompt_padded_len]
@@ -42,7 +90,18 @@ def get_optional_column(dataset, name, start, end, default=None):
 
     return [default] * (end - start)
 
-def generate_reasoning(model, tokenizer, max_new_tokens, do_sample, batch_size):
+def generate_reasoning(model, tokenizer, max_new_tokens, do_sample, batch_size, save_path="token_dataset", filename_prefix="rlvr_ood_tokens", force_generation = False):
+    
+    # If token dataset already exists, skip generation and return it
+    if not force_generation:
+        cached_dataset = load_token_dataset(
+            save_path=save_path,
+            filename_prefix=filename_prefix,
+        )
+
+        if cached_dataset is not None:
+            return cached_dataset
+
     dataset = build_ood_eval_dataset(tokenizer=tokenizer, mode="rlvr")
     gen_out = {}
 
@@ -57,7 +116,7 @@ def generate_reasoning(model, tokenizer, max_new_tokens, do_sample, batch_size):
         "ground_truth": [],
     }
 
-    for i in range(0, len(dataset), batch_size):
+    for i in tqdm(range(0, len(dataset), batch_size), desc="Generating reasoning"):
         # Settings batch_indices 
         batch_end = min(i + batch_size, len(dataset))
 
@@ -121,6 +180,11 @@ def generate_reasoning(model, tokenizer, max_new_tokens, do_sample, batch_size):
         gen_out["completion_tokens"].extend(completion_rows)
         gen_out["ground_truth"].extend(ground_truth)
 
-    return gen_out
+    save_info = save_token_dataset(
+        gen_out = gen_out,
+        save_path = save_path,
+        filename_prefix = filename_prefix
+    )
+    gen_out["save_info"] = save_info
 
     return gen_out
