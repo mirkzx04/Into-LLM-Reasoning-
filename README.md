@@ -67,7 +67,7 @@ For each model $m \in \{\text{BASE}, \text{SFT}, \text{RLVR}\}$ and for each sel
 - $\text{mlp}_{\text{output}}$: the contribution of the MLP block
 - $\text{attn}_{\text{output}}$: the contribution of the self-attention block
 
-Approximately, in a transformer layer: $\text{resid}_{\text{mid}}^{l} \approx \text{resid}_{\text{pre}}^{l} + \text{attn}_{\text{output}}^{l}$ and $\text{resid}_{\text{post}}^{l} \approx \text{resid}_{\text{mid}}^{l} + \text{mlp}_{\text{output}}^{l}$. The two intermediate residual streams can therefore be reconstructed using the information saved in the dataset.
+Approximately, in a transformer layer: $\text{resid}\sb{\text{mid}}^{l} \approx \text{resid}\sb{\text{pre}}^{l} + \text{attn}\sb{\text{output}}^{l}$ and $\text{resid}\sb{\text{post}}^{l} \approx \text{resid}\sb{\text{mid}}^{l} + \text{mlp}\sb{\text{output}}^{l}$. The two intermediate residual streams can therefore be reconstructed using the information saved in the dataset.
 
 1. **Component-Level Representation Comparison**
     
