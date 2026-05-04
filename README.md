@@ -63,11 +63,11 @@ meaning across all tokens of both the prompt and the response. The response cons
 
 For each model $m \in \{\text{BASE}, \text{SFT}, \text{RLVR}\}$ and for each selected layer $l$, the following activations are saved:
 
-- $\text{resid\_pre}$: the input residual stream to the layer
-- $\text{mlp\_output}$: the contribution of the MLP block
-- $\text{attn\_output}$: the contribution of the self-attention block
+- $\text{resid}_{\text{pre}}$: the input residual stream to the layer
+- $\text{mlp}_{\text{output}}$: the contribution of the MLP block
+- $\text{attn}_{\text{output}}$: the contribution of the self-attention block
 
-Approximately, in a transformer layer: $\text{resid\_mid}^{l} \approx \text{resid\_pre}^{l} + \text{attn\_output}^{l}$ and $\text{resid\_post}^{l} \approx \text{resid\_mid}^{l} + \text{mlp\_output}^{l}$. The two intermediate residual streams can therefore be reconstructed using the information saved in the dataset.
+Approximately, in a transformer layer: $\text{resid}_{\text{mid}}^{l} \approx \text{resid}_{\text{pre}}^{l} + \text{attn}_{\text{output}}^{l}$ and $\text{resid}_{\text{post}}^{l} \approx \text{resid}_{\text{mid}}^{l} + \text{mlp}_{\text{output}}^{l}$. The two intermediate residual streams can therefore be reconstructed using the information saved in the dataset.
 
 1. **Component-Level Representation Comparison**
     
