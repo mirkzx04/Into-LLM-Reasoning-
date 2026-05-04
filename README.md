@@ -1,12 +1,10 @@
-# Abstract
+## Abstract 
+Reinforcement Learning from Verifiable Rewards (RLVR) improves problem-solvin skills in LLMs. In this project I’ll fine tune open weights models to investigate the underlying reasoning mechanism acquired during RLVR. Training will be conducted using the GSM8K for mathematical reasoning and the HumanEval dataset for coding task. We aim to understand how RLVR enhances mathematical and algorithmic reasoning capabilities at mechanist level.
 
-*Reinforcement Learning from Verifiable Rewards* (RLVR) improves problem-solvin skills in LLMs. In this project I’ll fine tune open weights models to investigate the underlying reasoning mechanism acquired during *RLVR.* Training will be conducted using the *GSM8K* for mathematical reasoning and the *HumanEval* dataset for coding task. We aim to understand how *RLVR* enhances mathematical and algorithmic reasoning capabilities at mechanist level.
+## Goal 
+The academic community is currently debating how _RLVR_ alters model parameters. Specifically it remain unclear whather the model already possesses the necessary knowledge with _RLVR_ merely creating routing pathways to extract the correct answer or, if _RLVR_ induces the creation of novel features.
 
-# Goal
-
-The academic community is currently debating how *RLVR* alters model parameters. Specifically it remain unclear whather the model already possesses the necessary knowledge with *RLVR* merely creating routing pathways to extract the correct answer or, if *RLVR* induces the creation of novel features.
-
-Considering the transformers architecture as a residual stream manipulated by Attention Heads and MLPs, we aim to investigate the extent to which *RLVR* modifies internal representation versus merely acting as a behavioral wrapper.
+Considering the transformers architecture as a residual stream manipulated by Attention Heads and MLPs, we aim to investigate the extent to which _RLVR_ modifies internal representation versus merely acting as a behavioral wrapper.
 
 To formalize this, we define two competing hypotheses:
 
@@ -16,78 +14,74 @@ To formalize this, we define two competing hypotheses:
 To test these hypotheses, we will analyze three distinct training phases of the same model:
 
 1. **Vanilla Phase**: The base pre-trained model before any domain-specific exposure.
-2. **Supervised Fine-Tuning (SFT) Phase**: The model trained via next-token prediction on our datasets without *RLVR* (acting as a baseline for formatting and basic knowledge acquisition).
+2. **Supervised Fine-Tuning (SFT) Phase**: The model trained via next-token prediction on our datasets without _RLVR_ (acting as a baseline for formatting and basic knowledge acquisition).
 3. **RLVR Phase**: The model fine-tuned using RLVR on the same datasets
 
 By isolating these internal components, we will study:
 
-- **Self-Attention**: To evaluate if *RLVR* merely establishes pathways toward the correct answer.
-- **MLP**: To check if *RLVR* alters weights or activations within the feed-forward layers, which would strongly suggest the acquisition of new knowledge/features.
+- **Self-Attention**: To evaluate if _RLVR_ merely establishes pathways toward the correct answer.
+- **MLP**: To check if _RLVR_ alters weights or activations within the feed-forward layers, which would strongly suggest the acquisition of new knowledge/features.
 
 # Training Setup
-
 ## Supervised Fine-Tuning
+
 For the SFT stage, I used the NuminaMath-CoT dataset. This choice is motivated by recent work suggesting that a strong supervised fine-tuning phase is important before applying RLVR, since it provides the model with basic mathematical reasoning patterns, solution structure, and the desired response format.
 
 The SFT model achieves a high `mean_token_accuracy`, which indicates that it has learned to imitate the supervised solutions effectively, including the expected reasoning format and mathematical answer structure. However, this metric should mainly be interpreted as a measure of supervised imitation quality, rather than as direct evidence of robust mathematical generalization.
 
 ## RLVR Training
-For the RLVR stage, I constructed a mixed mathematical dataset composed of:
 
-1. GSM8K  
-2. MATH-Lighteval, filtered by specific levels and topics  
-3. DAPO-Math-17k, filtered for sample number
+For the RLVR stage, I constructed a mixed mathematical dataset composed of:
+1. GSM8K
+2. MATH-Lighteval, filtered by specific levels and topics
+3. DAPO-Math-17k, filtered for sample numbers
 
 The goal of this dataset mixture is to expose the model to heterogeneous mathematical problems, ranging from grade-school arithmetic reasoning to more diverse competition-style problems. While SFT teaches the model to imitate supervised reasoning traces, RLVR is used to further optimize the model toward solution trajectories that maximize verifiable correctness.
 
 In this sense, RLVR is not assumed to create OOD generalization by itself. Instead, the training setup is designed to test whether reward-based optimization over a heterogeneous dataset can improve both in-distribution accuracy and out-of-distribution generalization.
 
 ## RLVR Configuration
+
 For RLVR training, I used the Hugging Face `trl` library, specifically `GRPOConfig` and `GRPOTrainer`.
-
 The main hyperparameters were:
-
 - learning rate: `2e-6`
 - maximum completion length: `2000`
 - loss type: `dapo`
-
 I used the DAPO loss because the model does not produce extremely long chain-of-thought completions and because completion lengths are relatively variable across samples.
-
 The training setup also used DeepSpeed for memory-efficient distributed optimization and vLLM for faster generation during RLVR sampling.
+# Experimentss
+## Dataset Building
+For the experiments, a dataset of internal activations was constructed, extracted from three versions of the same model: BASE, SFT, and RLVR.
 
-## Reward Function
+For each example, the completion is generated by the RLVR model; the same tokenized sequence is then fed to all three models in order to obtain comparable activations at the exact same textual positions.
 
-The reward function is inspired by the DeepSeek-R1 training setup and combines an accuracy reward with a format reward.
+The complete sequence is $x=[x_{\text{prompt}}, x_{\text{completion}}]$, where $P_{\text{len}}$ is the length of the prompt and $A_{\text{len}}$ is the length of the generated completion.
 
-The accuracy reward assigns:
+The activations are collected for $t \in \{0, \dots, P_{\text{len}} + A_{\text{len}}\}$,
 
-- `+1.0` if the final answer is correct
-- `0.0` otherwise
+meaning across all tokens of both the prompt and the response. The response consists of a reasoning part (the intermediate completion) and a final answer containing the definitive response.
 
-The format reward assigns:
+For each model $m \in \{\text{BASE}, \text{SFT}, \text{RLVR}\}$ and for each selected layer $l$, the following activations are saved:
 
-- `+1.0` if the completion follows the required response format
-- `0.0` otherwise
+- $\text{resid\_pre}$: the input residual stream to the layer
+- $\text{mlp\_output}$: the contribution of the MLP block
+- $\text{attn\_output}$: the contribution of the self-attention block
 
-Since the model already learns the target format during SFT, the format reward is given a small weight of `0.01`. The main objective of RLVR is therefore to maximize mathematical correctness rather than simply reinforce formatting behavior.
-
-The total reward can be written as:
-$R = R_{\text{accuracy}} + 0.01 R_{\text{format}}$ where $R_{\text{accuracy}}$ is the dominant component.
-
-1. **Generated** : 
-
-# Experiments List
+Approximately, in a transformer layer: $\text{resid\_mid}^{l} \approx \text{resid\_pre}^{l} + \text{attn\_output}^{l}$ and $\text{resid\_post}^{l} \approx \text{resid\_mid}^{l} + \text{mlp\_output}^{l}$. The two intermediate residual streams can therefore be reconstructed using the information saved in the dataset.
 
 1. **Component-Level Representation Comparison**
     
-    For each problem type, we will extract the hidden states across the three model versions ($h^{v}_l, h^{SFT}_l$, $h^{RLVR}_l$). Instead of solely comparing global states, we will isolate the outputs of the Attention $z_l$ and MLP $m_l$ blocks. We will use Centered Kernel Alignment to measure representational similarity, identifying which specific component diverges most heavily after *RLVR*.
+    For each problem type, we will extract the hidden states across the three model versions ($h^{v}_l, h^{SFT}_l$, $h^{RLVR}_l$). Instead of solely comparing global states, we will isolate the outputs of the Attention $z_l$ and MLP $m_l$ blocks. We will use Centered Kernel Alignment to measure representational similarity, identifying which specific component diverges most heavily after _RLVR_.
+    
+    1. **CKA Input** : Compute the CKA on the last token of the input sequence, so we can understan how RLVR deformed the context comprension first that the model star the reasoning.
+    2. **CKA Reasoning** : Let's make the RLVR model generate first step of reasoning and give it to no RLVR model, then extract the activazione of the last reasoning token (last token before markdown token). In this way we force no RLVR model to process the logic path of RLVR, through CKA we can measure the logic representation differenc between models
     
 2. **Linear Probing & Causal Intervention**
     
-    We will train linear classifiers on the hidden states to predict correct intermediate reasoning steps, paired with Logit Lens analysis to map intermediate representations to the vocabulary space. To establish causality, we will employ **Activation Patching** (Causal Tracing): by injecting specific activations from the *RLVR* model into the SFT model during inference, we aim to definitively prove whether a specific MLP or Attention layer holds the critical reasoning features.
+    We will train linear classifiers on the hidden states to predict correct intermediate reasoning steps, paired with Logit Lens analysis to map intermediate representations to the vocabulary space. To establish causality, we will employ **Activation Patching** (Causal Tracing): by injecting specific activations from the _RLVR_ model into the SFT model during inference, we aim to definitively prove whether a specific MLP or Attention layer holds the critical reasoning features.
+	1. **Linear Probing Answer** : We take the LLM activation of different layer for different rasoning token $h_{l,t} \in \mathbb{R}^{d}$ and through linear layer compute $\hat{y} = \text{softmax}(W_{h_{l,t}}+b) \in \mathbb{R}^{B \times C}$, wjere $C$ is the number of classes 
+    **Linear Probing Correct :**
     
 3. **Weight Distance & Spectral Analysis**
     
-    To quantify parameter updates, we will compute the $L_2$ norm of the weight differences: $||W_{RLVR} - W_{SFT}||$ and $||W_{RLVR} - W_v||$. To overcome the limitations of $L_2$ orms in overparameterized networks, we will perform Singular Value Decomposition (SVD) on the weight difference matrix $\Delta W$. If *RLVR* primarily acts as a steering mechanism, the weight updates should exhibit a low rank and concentrate in specific routing heads rather than MLP layers.
-
-
+    To quantify parameter updates, we will compute the $L_2$ norm of the weight differences: $||W_{RLVR} - W_{SFT}||$ and $||W_{RLVR} - W_v||$. To overcome the limitations of $L_2$ orms in overparameterized networks, we will perform Singular Value Decomposition (SVD) on the weight difference matrix $\Delta W$. If _RLVR_ primarily acts as a steering mechanism, the weight updates should exhibit a low rank and concentrate in specific routing heads rather than MLP layers.
