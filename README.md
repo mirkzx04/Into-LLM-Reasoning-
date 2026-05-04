@@ -58,7 +58,7 @@ We extract hidden states across the three versions and isolate the outputs of At
 
 ## 2. Linear Probing & Causal Intervention
 We train linear classifiers on the hidden states to predict correct intermediate reasoning steps. 
-*   **Linear Probing Answer:** We take the activation vector for a reasoning token and pass it through a linear layer with a Softmax function to calculate the probability of specific classes (e.g., correct vs. incorrect logic).
+*   **Linear Probing Answer:** We take the activation vector for a reasoning token and pass it through a linear layer with a Softmax function to calculate the probability of specific classes among A, B, C or D.
 *   **Activation Patching:** To establish causality, we inject specific activations from the RLVR model into the SFT model. This proves whether a specific MLP or Attention layer holds the critical features for successful reasoning.
 
 ## 3. Weight Distance & Spectral Analysis
