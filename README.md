@@ -51,6 +51,95 @@ The sequence consists of the prompt and the completion. For every model and sele
 
 In a standard transformer layer, the "middle" residual state is the sum of the **pre-residual** and the **attention output**. The final "post-residual" state is the sum of that **middle state** and the **MLP output**.
 
+### Activation Dataset Reproducibility
+
+To reproduce the activation dataset, run `get_activation_dataset` from `experiments/experiments_main.py`.
+
+This function builds a shared token cache using a generator model, then replays the same prompt-completion sequences through all model variants to extract comparable activations.
+
+### Main inputs
+
+- `gen_model`: model used to generate the completion.
+- `gen_tokenizer`: tokenizer associated with `gen_model`.
+- `gen_dataset`: dataset used for generation.
+- `model_desc`: list of `(model_path, model_name)` pairs for the models to compare.
+- `save_path`: directory where the activation dataset will be saved.
+- `generator_name`: identifier of the model used for generation.
+- `ood_dataset_name`: identifier of the evaluation dataset.
+- `max_new_tokens`: maximum completion length used during generation.
+
+### Saved files
+
+Running the pipeline creates:
+
+- `save_path/<dataset_name>.h5`: activation dataset in HDF5 format
+- `save_path/<dataset_name>_metadata.pt`: lightweight metadata for the activation dataset
+- `save_path/tokens_cache/<token_cache_prefix>.pt`: full token cache
+- `save_path/tokens_cache/<token_cache_prefix>.jsonl`: JSONL export of the token cache
+
+### Extraction procedure
+
+1. The generator model produces one completion for each prompt in `gen_dataset`.
+2. Prompt tokens and generated completion tokens are saved in a token cache.
+3. The same full sequence (`prompt + completion`) is replayed through every model listed in `model_desc`.
+4. Activations are extracted at the same token positions for all compared models.
+
+### Current activation setup
+
+At the moment, activations are extracted for:
+- the first layer
+- the middle layer
+- the last layer
+
+For each selected layer, the following activations are stored:
+- `resid_pre_act`
+- `attn_out_act`
+- `mlp_out_act`
+
+The saved token positions cover the full sequence:
+- all prompt tokens
+- all completion tokens
+
+### HDF5 structure
+
+```text
+<dataset_name>.h5
+│
+├── <model_name_1>/
+│   ├── index/
+│   │   ├── sample_id
+│   │   ├── start
+│   │   ├── end
+│   │   ├── prompt_len
+│   │   ├── completion_len
+│   │   └── total_len
+│   │
+│   ├── layer_00/
+│   │   ├── mlp_out_act      # [total_tokens, d_model]
+│   │   ├── attn_out_act     # [total_tokens, d_model]
+│   │   └── resid_pre_act    # [total_tokens, d_model]
+│   │
+│   ├── layer_XX/
+│   │   ├── mlp_out_act
+│   │   ├── attn_out_act
+│   │   └── resid_pre_act
+│   │
+│   └── layer_YY/
+│       ├── mlp_out_act
+│       ├── attn_out_act
+│       └── resid_pre_act
+│
+└── <model_name_2>/
+    ...
+````
+
+Here, `start` and `end` define the row span of each sample inside the flattened activation matrices.
+
+### Notes
+* The exact group names at the top level of the HDF5 file depend on the `model_name` values passed in `model_desc`.
+* If you want to change which layers are extracted, modify the layer-selection logic in `extract_activation.py`.
+* The token cache `.pt` file stores the generated tokenized dataset, while the `*_metadata.pt` file stores only lightweight metadata about the activation dataset.
+
 ## 1. Component-Level Representation Comparison
 We extract hidden states across the three versions and isolate the outputs of Attention and MLP blocks. We use **Centered Kernel Alignment (CKA)** to measure similarity.
 *   **CKA Input:** Computed on the last token of the input sequence to see how RLVR changes context comprehension before reasoning begins.
