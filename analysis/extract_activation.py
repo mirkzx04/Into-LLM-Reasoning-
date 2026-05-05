@@ -199,6 +199,8 @@ def extract_activation(
 
     # Generate one shared completion set that will be replayed through all models.
     token_cache_prefix = f"{generator_name}_{ood_dataset_name}_max{max_new_tokens}_tok"
+    token_cache_dir = os.path.join(save_path, "tokens_cache")
+    os.makedirs(token_cache_dir, exist_ok=True)
     generated = generate_reasoning(
         model=gen_model,
         tokenizer=gen_tokenizer,
@@ -206,7 +208,7 @@ def extract_activation(
         do_sample=False,
         batch_size=batch_size,
         dataset = gen_dataset,
-        save_path=save_path,
+        save_path=token_cache_dir,
         filename_prefix=token_cache_prefix,
     )
 
