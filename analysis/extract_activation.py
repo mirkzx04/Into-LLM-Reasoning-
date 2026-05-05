@@ -1,46 +1,81 @@
-import os 
+import os
 import sys
+
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 
-from models.rope_theta import get_rope_theta
-
-import pkg_resources
 import torch as th
-
 from transformer_lens import HookedTransformer
 from tqdm import tqdm
 
-from models.model import get_model, get_tokenizer, MODEL_ID
+from models.model import MODEL_ID, get_model, get_tokenizer
 from analysis.generation import generate_reasoning
-from analysis.organize_activation import append_cache_to_single_h5, ACTIVATION_BLOCKS, np
+from analysis.organize_activation import ACTIVATION_BLOCKS, append_cache_to_single_h5
 
-RLVR_PTH = "rlvr_model_math"
-SFT_PTH =  "sftt_model_math"
+# Default context used for TransformerLens forward passes.
+DEFAULT_N_CTX = 5_000
 
-SAVE_PATH = f"activation_dataset"
+# Run all extraction on GPU when it is available.
+DEVICE = "cuda" if th.cuda.is_available() else "cpu"
 
-
-device = "cuda" if th.cuda.is_available() else "cpu"
-
-def forward_with_cache(model, inpt, positions, names_filter):
-    with th.no_grad(): 
+def forward_with_cache(model, input_tokens, positions, hook_names):
+    # Run a forward pass and cache only the requested hooks.
+    with th.no_grad():
         _, cache = model.run_with_cache(
-            inpt,
-            names_filter=names_filter,
+            input_tokens,
+            names_filter=hook_names,
             pos_slice=positions,
             return_type=None,
         )
-            
+
     return cache
 
-def get_activation_position(prompt_len, completion_len):
+def get_hook_names(interesting_layers):
+    # Build the exact hook names to cache for the selected layers.
+    return [
+        f"blocks.{layer}.{hook_name}"
+        for layer in interesting_layers
+        for hook_name in ACTIVATION_BLOCKS.values()
+    ]
+
+def get_activation_dataset_paths(
+        save_path, 
+        generator_name, 
+        ood_dataset_name, 
+        max_new_tokens
+    ):    
+    # Store the dataset directly inside save_path without nested folders.
+    os.makedirs(save_path, exist_ok=True)
+    dataset_name = f"{generator_name}_{ood_dataset_name}_max_{max_new_tokens}_acts"
+    return {
+        "dataset_name": dataset_name,
+        "save_dir": save_path,
+        "h5_path": os.path.join(save_path, f"{dataset_name}.h5"),
+        "metadata_path": os.path.join(save_path, f"{dataset_name}_metadata.pt"),
+    }
+
+def load_existing_activation_dataset(h5_path, metadata_path):
+    # Load the saved metadata when it exists and return the cached dataset info.
+    metadata = None
+    if os.path.exists(metadata_path):
+        metadata = th.load(metadata_path, map_location="cpu")
+
+    return {
+        "h5_path": h5_path,
+        "metadata_path": metadata_path,
+        "metadata": metadata,
+        "num_samples": None if metadata is None else metadata.get("num_samples"),
+        "from_cache": True,
+    }
+
+def get_activation_positions(prompt_len, completion_len):
+    # Save all token states across prompt and completion.
     total_len = prompt_len + completion_len
-    
-    # All token states: prompt + completion.
-    return list(range(0, total_len))
-    
-def build_metadata(generated) :
+    return list(range(total_len))
+
+
+def build_sample_metadata(generated):
+    # Convert the generated token dataset into a metadata structure per sample.
     metadata = []
 
     sample_ids = generated["sample_id"]
@@ -50,7 +85,7 @@ def build_metadata(generated) :
     completion_tokens = generated["completion_tokens"]
     ground_truths = generated.get("ground_truth", [None] * len(prompt_tokens))
 
-    for sample_id, prompt_text, completion_text, p_token, c_token, gt in zip(
+    for sample_id, prompt_text, completion_text, prompt_token, completion_token, ground_truth in zip(
         sample_ids,
         prompt_texts,
         completion_texts,
@@ -58,197 +93,185 @@ def build_metadata(generated) :
         completion_tokens,
         ground_truths,
     ):
-        prompt_len = p_token.shape[-1]
-        completion_len = c_token.shape[-1]
-
-        positions = get_activation_position(
+        prompt_len = prompt_token.shape[-1]
+        completion_len = completion_token.shape[-1]
+        positions = get_activation_positions(
             prompt_len=prompt_len,
             completion_len=completion_len,
         )
+        full_tokens = th.cat([prompt_token, completion_token], dim=-1)
 
-        full_tokens = th.cat([p_token, c_token], dim=-1)
-
-        metadata.append({
-            "sample_id": int(sample_id),
-            "prompt_text": prompt_text,
-            "completion_text": completion_text,
-            "ground_truth": gt,
-
-            "prompt_tokens": p_token.cpu(),
-            "completion_tokens": c_token.cpu(),
-            "full_tokens": full_tokens.cpu(),
-
-            "prompt_len": int(prompt_len),
-            "completion_len": int(completion_len),
-            "total_len": int(prompt_len + completion_len),
-
-            "positions": positions,
-            "num_positions": len(positions),
-        })
+        metadata.append(
+            {
+                "sample_id": int(sample_id),
+                "prompt_text": prompt_text,
+                "completion_text": completion_text,
+                "ground_truth": ground_truth,
+                "prompt_tokens": prompt_token.cpu(),
+                "completion_tokens": completion_token.cpu(),
+                "full_tokens": full_tokens.cpu(),
+                "prompt_len": int(prompt_len),
+                "completion_len": int(completion_len),
+                "total_len": int(prompt_len + completion_len),
+                "positions": positions,
+                "num_positions": len(positions),
+            }
+        )
 
     return metadata
 
-def save_activation_shard(
-    cache, 
-    item, 
-    model_name, 
-    num_layers, 
-    save_dir,
-    activation_dtype = th.float16    
-): 
-    model_dir = os.path.join(save_dir, model_name)
-    os.makedirs(model_dir, exist_ok = True)
 
-    sample_id = item["sample_id"]
-
-    shard = {
-        "sample_id": sample_id,
-        "model_name": model_name,
-
-        "prompt_text": item["prompt_text"],
-        "completion_text": item["completion_text"],
-        "ground_truth": item["ground_truth"],
-
-        "prompt_len": item["prompt_len"],
-        "completion_len": item["completion_len"],
-        "total_len": item["total_len"],
-
-        "positions": item["positions"],
-        "num_positions": item["num_positions"],
-
-        "prompt_tokens": item["prompt_tokens"],
-        "completion_tokens": item["completion_tokens"],
-        "full_tokens": item["full_tokens"],
-
+def save_metadata(metadata, metadata_path, max_new_tokens, batch_size, do_sample):
+    # Save a lightweight metadata file next to the HDF5 dataset.
+    payload = {
+        "max_new_tokens": max_new_tokens,
+        "generation_batch_size": batch_size,
+        "do_sample": do_sample,
+        "num_samples": len(metadata),
         "activation_blocks": ACTIVATION_BLOCKS,
-        "activations": {},
+        "metadata": [
+            {
+                "sample_id": item["sample_id"],
+                "prompt_text": item["prompt_text"],
+                "completion_text": item["completion_text"],
+                "ground_truth": item["ground_truth"],
+                "prompt_len": item["prompt_len"],
+                "completion_len": item["completion_len"],
+                "total_len": item["total_len"],
+                "num_positions": item["num_positions"],
+            }
+            for item in metadata
+        ],
     }
 
-    for l in range(num_layers):
-        shard["activations"][l] = {}
+    th.save(payload, metadata_path)
+    return payload
 
-        for block_name, hook_name in ACTIVATION_BLOCKS.items():
-            key = f"blocks.{l}.{hook_name}"
 
-            act = cache[key].detach().cpu()
-
-            # cache shape: [1, num_positions, d_model]
-            act = act.squeeze(0).to(activation_dtype)
-
-            shard["activations"][l][block_name] = act
-
-    shard_path = os.path.join(
-        model_dir,
-        f"sample_{sample_id:06d}.pt"
+def load_tl_model(model_pth, n_ctx=DEFAULT_N_CTX):
+    # Build a TransformerLens model for one checkpoint variant.
+    tl_model = HookedTransformer.from_pretrained_no_processing(
+        MODEL_ID,
+        hf_model=get_model(model_pth),
+        tokenizer=get_tokenizer(model_pth),
+        device=DEVICE,
+        dtype=th.bfloat16,
+        n_ctx=n_ctx,
     )
 
-    th.save(shard, shard_path)
+    # Keep the config aligned with the runtime context window.
+    tl_model.cfg.n_ctx = n_ctx
+    tl_model.eval().to(DEVICE)
+    return tl_model
 
-    return shard_path
 
-def extract_activation(max_new_tokens, batch_size):
-    do_sample = batch_size > 1
-    
-    # Check if save path exist, if not create it
-    save_dir = os.path.join(
-        SAVE_PATH,
-        f"max_new_tokens_{max_new_tokens}_genbs_{batch_size}"
+def get_interesting_layers(num_layers):
+    # Extract only the first, middle and last layer.
+    return [0, num_layers // 2, num_layers - 1]
+
+
+def extract_activation(
+    max_new_tokens,
+    batch_size,
+    gen_model,
+    gen_tokenizer,
+    gen_dataset,
+    model_desc,
+    save_path,
+    generator_name,
+    ood_dataset_name,
+):
+    # Reuse the existing activation dataset when it is already available locally.
+    dataset_paths = get_activation_dataset_paths(
+        save_path=save_path,
+        max_new_tokens=max_new_tokens,
+        generator_name=generator_name,
+        ood_dataset_name=ood_dataset_name
     )
-    os.makedirs(save_dir, exist_ok=True)
+    h5_path = dataset_paths["h5_path"]
+    metadata_path = dataset_paths["metadata_path"]
 
-    h5_path = os.path.join(save_dir, "activation_dataset.h5")
-    metadata_path = os.path.join(save_dir, "metadata.pt")
+    if os.path.exists(h5_path):
+        return load_existing_activation_dataset(
+            h5_path=h5_path,
+            metadata_path=metadata_path,
+        )
 
-    # Generate reasoning 
-    hf_rlvr = get_model(RLVR_PTH)
-    rlvr_tokenizer = get_tokenizer(RLVR_PTH)
-
-    generated = generate_reasoning(hf_rlvr, rlvr_tokenizer, max_new_tokens, do_sample, batch_size)
-    del hf_rlvr
-    th.cuda.empty_cache()
-
-    # Build metadata
-    metadata = build_metadata(generated)
-
-    th.save(
-        {
-            "max_new_tokens": max_new_tokens,
-            "generation_batch_size": batch_size,
-            "do_sample": do_sample,
-            "num_samples": len(metadata),
-            "activation_blocks": ACTIVATION_BLOCKS,
-            "metadata": [
-                {
-                    "sample_id": item["sample_id"],
-                    "prompt_text": item["prompt_text"],
-                    "completion_text": item["completion_text"],
-                    "ground_truth": item["ground_truth"],
-                    "prompt_len": item["prompt_len"],
-                    "completion_len": item["completion_len"],
-                    "total_len": item["total_len"],
-                    "num_positions": item["num_positions"],
-                }
-                for item in metadata
-            ],
-        },
-        metadata_path,
+    # Generate one shared completion set that will be replayed through all models.
+    token_cache_prefix = f"{generator_name}_{ood_dataset_name}_max{max_new_tokens}_tok"
+    generated = generate_reasoning(
+        model=gen_model,
+        tokenizer=gen_tokenizer,
+        max_new_tokens=max_new_tokens,
+        do_sample=False,
+        batch_size=batch_size,
+        dataset = gen_dataset,
+        save_path=save_path,
+        filename_prefix=token_cache_prefix,
     )
 
-    model_desc = [(None, "base"), (SFT_PTH, "sftt"), (RLVR_PTH, "rlvr")]
-    for model_pth, model_name in tqdm(model_desc, desc="Extracting model activation"):
-        tl_model =HookedTransformer.from_pretrained_no_processing(
-            MODEL_ID,
-            hf_model=get_model(model_pth),
-            tokenizer=get_tokenizer(model_pth),
-            device=device,
-            dtype=th.bfloat16,
-            n_ctx = 5_000
-        ) # Istance transformer lens model
-        tl_model.cfg.n_ctx = 5_000 # Settings model context
-        tl_model.eval().to(device)
-        num_layers = tl_model.cfg.n_layers
-        interesting_layers = [0, num_layers // 2, num_layers - 1]
+    # Free the generation model before the activation extraction loop starts.
+    del gen_model
+    if DEVICE == "cuda":
+        th.cuda.empty_cache()
 
-        hook_names = [
-             f"blocks.{l}.{hook_name}"
-            for l in interesting_layers
-            for hook_name in ACTIVATION_BLOCKS.values()
-        ]
+    # Build and persist the metadata before writing activations.
+    metadata = build_sample_metadata(generated)
+    metadata = [item for item in metadata if item["total_len"] <= DEFAULT_N_CTX]
+    metadata_payload = save_metadata(
+        metadata=metadata,
+        metadata_path=metadata_path,
+        max_new_tokens=max_new_tokens,
+        batch_size=batch_size,
+        do_sample=False,
+    )
 
-        # Get activation
+    for model_pth, model_name in tqdm(model_desc, desc="Extracting model activations"):
+        # Load one model variant at a time to keep the memory footprint controlled.
+        tl_model = load_tl_model(model_pth=model_pth, n_ctx=DEFAULT_N_CTX)
+        interesting_layers = get_interesting_layers(tl_model.cfg.n_layers)
+        hook_names = get_hook_names(interesting_layers)
+
         for item in metadata:
-            full_tokens = item["full_tokens"].unsqueeze(0).to(device)
+            # Move the full prompt+completion sequence to the active device.
+            full_tokens = item["full_tokens"].unsqueeze(0).to(DEVICE)
             positions = item["positions"]
 
-            seq_len = full_tokens.shape[-1]
-            if seq_len > tl_model.cfg.n_ctx:
-                del full_tokens
-                th.cuda.empty_cache()
-                continue
-            
-            th.cuda.reset_peak_memory_stats()
+            # Reset peak stats only when CUDA is available.
+            if DEVICE == "cuda":
+                th.cuda.reset_peak_memory_stats()
 
             cache = forward_with_cache(
                 model=tl_model,
-                inpt=full_tokens,
+                input_tokens=full_tokens,
                 positions=positions,
-                names_filter=hook_names,
+                hook_names=hook_names,
             )
 
+            # Append the cached activations to the shared HDF5 file.
             append_cache_to_single_h5(
                 h5_path=h5_path,
-                cache = cache,
-                item = item,
+                cache=cache,
+                item=item,
                 model_name=model_name,
                 interesting_layers=interesting_layers,
-                actication_dtype=np.float16
             )
 
+            # Release per-sample tensors before processing the next sample.
             del cache
             del full_tokens
+            if DEVICE == "cuda":
+                th.cuda.empty_cache()
+
+        # Release the current model before loading the next one.
+        del tl_model
+        if DEVICE == "cuda":
             th.cuda.empty_cache()
 
-        del tl_model
-        th.cuda.empty_cache()
-
-extract_activation(3000, 40)
+    return {
+        "h5_path": h5_path,
+        "metadata_path": metadata_path,
+        "metadata": metadata_payload,
+        "num_samples": metadata_payload["num_samples"],
+        "from_cache": False,
+    }

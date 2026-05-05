@@ -15,7 +15,7 @@ def tensor_to_list(x):
         return x.detach().cpu().tolist()
     return list(x)
 
-def load_token_dataset(save_path = "token_dataset", filename_prefix = "rlvr_ood_tokens") : 
+def load_token_dataset(save_path, filename_prefix) : 
     pt_path = os.path.join(save_path, f"{filename_prefix}.pt")
 
     if os.path.exists(pt_path):
@@ -23,7 +23,7 @@ def load_token_dataset(save_path = "token_dataset", filename_prefix = "rlvr_ood_
 
     return None
 
-def save_token_dataset(gen_out, save_path = "token_dataset", filename_prefix = "rlvr_ood_tokens"):
+def save_token_dataset(gen_out, save_path, filename_prefix):
     os.makedirs(save_path, exist_ok=True)
 
     pt_path = os.path.join(save_path, f"{filename_prefix}.pt")
@@ -90,7 +90,17 @@ def get_optional_column(dataset, name, start, end, default=None):
 
     return [default] * (end - start)
 
-def generate_reasoning(model, tokenizer, max_new_tokens, do_sample, batch_size, save_path="token_dataset", filename_prefix="rlvr_ood_tokens", force_generation = False):
+def generate_reasoning(
+    model, 
+    tokenizer, 
+    max_new_tokens, 
+    do_sample, 
+    batch_size, 
+    dataset,
+    save_path,
+    filename_prefix,
+    force_generation = False
+):
     
     # If token dataset already exists, skip generation and return it
     if not force_generation:
@@ -101,8 +111,6 @@ def generate_reasoning(model, tokenizer, max_new_tokens, do_sample, batch_size, 
 
         if cached_dataset is not None:
             return cached_dataset
-
-    dataset = build_ood_eval_dataset(tokenizer=tokenizer, mode="rlvr")
     gen_out = {}
 
     model = model.eval().to("cuda" if th.cuda.is_available() else "cpu")
