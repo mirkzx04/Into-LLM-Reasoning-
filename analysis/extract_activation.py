@@ -9,6 +9,7 @@ from transformer_lens import HookedTransformer
 from tqdm import tqdm
 
 from models.model import MODEL_ID, get_model, get_tokenizer
+from models.rope_theta import get_rope_theta
 from analysis.generation import generate_reasoning
 from analysis.organize_activation import ACTIVATION_BLOCKS, append_cache_to_single_h5
 
