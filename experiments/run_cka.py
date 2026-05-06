@@ -6,8 +6,9 @@ sys.path.append(parent_dir)
 import torch as th
 import matplotlib.pyplot as plt
 import numpy as np
+from tqdm import tqdm
 
-from analysis.extract_activation import extract_mlp_attn_out
+from experiments.act_dataset_utils import get_activation_dataset, load_sample_batch
 
 device = 'cuda' if th.cuda.is_available() else 'cpu'
 
@@ -16,7 +17,7 @@ def center_features(x) :
     Args :
         X L TorchTensor [B, d_model]
     """
-    return x - x.mena(dim = 0, keepdim = True)
+    return x - x.mean(dim = 0, keepdim = True)
 
 def linear_cka(x, y, eps = 1e-8):
     """
@@ -38,87 +39,12 @@ def linear_cka(x, y, eps = 1e-8):
 
     return (numerator / denominator).item()
 
-def compute_pairwise_cka(model_acts):
-    pairs = [
-        ('base', 'sftt'),
-        ('base', 'rlvr'),
-        ('sftt', 'rlvr')
-    ]
-    components = ['attn_act', 'mlp_act']
-    results = {comp : {} for comp in components}
+dataset = get_activation_dataset()
 
-    for comp in components:
-        for m1, m2 in pairs:
-            pair_name = f"{m1}_vs_{m2}"
-            results[comp][pair_name] = {}
-
-            layers = model_acts[m1][comp].keys()
-
-            for l in layers:
-                X = model_acts[m1][comp][l].float().to(device)
-                Y = model_acts[m2][comp][l].float().to(device)
-
-                if X.shape != Y.shape : 
-                    raise ValueError(
-                        f'Shape mismatch for {comp}, layer {l}, pair {pair_name}' 
-                        f'{X.shape} vs {Y.shape}'
-                    )
-
-                # Check shape
-                if X.ndim == 3:
-                    B, P, D = X.shape
-                    X = X.reshape(B * P, D)
-                    Y = Y.reshape(B * P, D)
-                
-                cka_value = linear_cka(X, Y)
-                results[comp][pair_name][l] = cka_value
-
-                del X, Y
-
-def plot_cka_by_layer(cka_results):
-    for comp in ["attn_act", "mlp_act"]:
-        plt.figure(figsize=(8, 5))
-
-        for pair_name, layer_dict in cka_results[comp].items():
-            layers = sorted(layer_dict.keys())
-            values = [layer_dict[l] for l in layers]
-            plt.plot(layers, values, marker="o", label=pair_name)
-
-        plt.xlabel("Layer")
-        plt.ylabel("CKA")
-        plt.title(f"CKA by layer - {comp}")
-        plt.legend()
-        plt.grid(True)
-        plt.tight_layout()
-        plt.show()
-
-def plot_cka_heatmap(cka_results):
-    for comp in ["attn_act", "mlp_act"]:
-        pair_names = list(cka_results[comp].keys())
-        layers = sorted(next(iter(cka_results[comp].values())).keys())
-
-        matrix = []
-        for pair_name in pair_names:
-            row = [cka_results[comp][pair_name][l] for l in layers]
-            matrix.append(row)
-
-        matrix = np.array(matrix)
-
-        plt.figure(figsize=(10, 4))
-        plt.imshow(matrix, aspect="auto")
-        plt.colorbar(label="CKA")
-        plt.xticks(range(len(layers)), layers)
-        plt.yticks(range(len(pair_names)), pair_names)
-        plt.xlabel("Layer")
-        plt.ylabel("Model pair")
-        plt.title(f"CKA heatmap - {comp}")
-        plt.tight_layout()
-        plt.show()
-
-def compute_cka(last_token = True):
-    model_acts = extract_mlp_attn_out(prompts='', last_token = last_token)
-    cka_results = compute_pairwise_cka(model_acts=model_acts)
-    
-    plot_cka_by_layer(cka_results)
-    plot_cka_heatmap(cka_results)
-
+load_sample_batch(
+    batch_size=5,
+    model_names="rlvr",
+    act_modules = None,
+    h5_path=dataset["h5_path"],
+    layers=None
+)

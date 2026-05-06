@@ -1,0 +1,10 @@
+{
+  "num_rows": 3652,
+  "columns": [
+    "solution",
+    "prompt",
+    "ood_source"
+  ],
+  "save_dir": "/home/mirkzx/Scrivania/DL_Project/Into-LLM-Reasoning-/data/ood_eval_dataset",
+  "jsonl_path": "/home/mirkzx/Scrivania/DL_Project/Into-LLM-Reasoning-/data/ood_eval_dataset.jsonl"
+}
