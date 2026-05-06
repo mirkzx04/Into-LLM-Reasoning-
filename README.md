@@ -142,32 +142,37 @@ Here, `start` and `end` define the row span of each sample inside the flattened 
 
 ## Component-Level Representation Comparison Summary
 
-This analysis compares the internal representations (`attn_out_act` and `mlp_out_act`) of three model versions (BASE, SFT, and RLVR) using Centered Kernel Alignment (CKA) to determine if fine-tuning causes large global geometric changes. 
+This analysis compares internal representations across three model training stages—**BASE**, **SFT**, and **RLVR**—to determine if fine-tuning causes large global changes in the geometry of Attention and MLP outputs. We compute **linear Centered Kernel Alignment (CKA)** between pairs of model-layer representations using two component outputs: `attn_out_act` and `mlp_out_act`. 
+
+Activations of shape `[L, seq_len, d_model]` are sliced into `[N, d_model]` matrices using two distinct strategies.
 
 ---
 
-### Last Input Token
-This strategy measures the final prompt state immediately before completion generation.
+### 1. Last Input Token Strategy
+This strategy isolates the final prompt state before completion generation (`act[:, prompt_len - 1, :]`).
 
-#### MLP output
+#### MLP Output
 ![](experiments/CKA/cka_img/mlp_out_act_last_inpt_tok.png)
 
-The heatmap reveals strong same-layer structure. Layer identity is the dominant source of variation, indicating that fine-tuning does not globally rewrite MLP output geometry at this stage. Any changes are likely localized to specific directions or token contexts.
+*   **Layer Identity Dominates:** Same-layer representations (e.g., `layer_00`, `layer_14`, `layer_27`) show high alignment across `base`, `sftt`, and `rlvr`. Cross-layer similarities are substantially lower.
+*   **Conclusion:** Fine-tuning does not globally rewrite MLP output geometry here. Changes are likely localized to specific directions or token contexts rather than a broad reorganization.
 
-#### Attention output
+#### Attention Output
 ![](experiments/CKA/cka_img/attn_out_act_last_input_token.png)
 
-Similarly, same-layer representations remain highly aligned. While RLVR does not induce massive global changes to Attention output geometry here, sparse or head-specific routing changes cannot be ruled out.
+*   **Qualitative Consistency:** Displays the same strong same-layer alignment structure as the MLP output.
+*   **Conclusion:** RLVR does not induce a large global change in Attention geometry at this token, though sparse or head-specific routing changes cannot be ruled out by global CKA.
 
 ---
 
-### Completion Mean
-This strategy averages the hidden states of generated completion tokens, measuring how models represent the same generated reasoning sequence.
+### 2. Completion Mean Strategy
+This strategy averages the hidden states over the generated completion tokens (`act[:, prompt_len : prompt_len + completion_len, :].mean(axis=1)`), measuring how models represent the identical reasoning trajectory.
 
-#### MLP output
+#### MLP Output
 ![](experiments/CKA/cka_img/mlp_out_act_mean_completion.png)
 
-Alignment is heavily structured by depth. Early and middle layers remain nearly identical across models. The largest drop in similarity occurs in the final layer (`layer_27`), where RLVR remains closer to SFT than BASE. This suggests fine-tuning primarily affects later layers rather than triggering a global rewrite.
+*   **Depth-Dependent Alignment:** Early (`layer_00`) and middle (`layer_14`) layers remain almost identical across models (CKA ~0.98–1.0).
+*   **Late Layer Shift:** The most significant drop occurs at `layer_27` (down to `0.8949` for `base-rlvr`). However, RLVR maintains higher alignment with SFT (`0.9565`) than with BASE. Representational changes are strongly limited to final layers.
 
 | Layer    | base-sftt | base-rlvr | sftt-rlvr |
 | -------- | --------: | --------: | --------: |
@@ -176,10 +181,13 @@ Alignment is heavily structured by depth. Early and middle layers remain nearly 
 | layer_27 |    0.9172 |    0.8949 |    0.9565 |
 | mean     |    0.9688 |    0.9611 |    0.9812 |
 
-#### Attention output
+#### Attention Output
 ![](experiments/CKA/cka_img/attn_out_act_completion_mean.png)
 
-Attention output geometry is even more preserved across versions than MLP, with a minimal late-layer drop. A head-level analysis is required to determine if specific token-level routing patterns change, as global geometry remains largely stable.
+
+
+*   **High Preservation:** Attention geometry is even more preserved across versions than MLP geometry, with all layer similarities remaining above `0.96`.
+*   **Conclusion:** RLVR does not trigger broad reorganization of the full Attention output vector, though a head-level analysis is required to verify localized routing shifts.
 
 | Layer    | base-sftt | base-rlvr | sftt-rlvr |
 | -------- | --------: | --------: | --------: |
@@ -190,15 +198,12 @@ Attention output geometry is even more preserved across versions than MLP, with 
 
 ---
 
-### Interpretation
-Across both components and slicing strategies, **same layer across models is more similar than different layers within/across models**. CKA primarily captures layer identity rather than training-stage identity. 
+### Key Interpretations
 
-**Key Takeaways:**
-* Early and middle layers are virtually unchanged across training stages.
-* Fine-tuning effects are concentrated in the final layers, with MLP changing more than Attention.
-* RLVR representations are generally closer to SFT than to BASE.
-
-These findings provide weak evidence against a strong global Representation Learning Hypothesis (no broad reorganization of the feature space). However, they do not rule out localized representation changes within MLPs or the Steering Hypothesis (sparse, head-level routing changes).
+1.  **Dominant Pattern:** `Same layer across models > Different layers within/across models`. CKA captures layer depth much more strongly than training-stage identity.
+2.  **Depth Dynamics:** Early/middle layers remain virtually untouched. Fine-tuning effects are most pronounced in the final layers, with MLP representations altering more than Attention representations.
+3.  **Model Proximity:** In late layers, RLVR stays geometrically closer to SFT than to BASE.
+4.  **Hypotheses Evaluated:** These findings offer weak evidence against a strong global **Representation Learning Hypothesis** (which expects broad MLP reorganization). However, they do not rule out localized representation learning or the **Steering Hypothesis**, as granular, sparse routing shifts may be invisible to global component-level CKA.
 
 <!-- The next analyses should therefore focus on more localized measurements:
 
