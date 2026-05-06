@@ -5,7 +5,8 @@ sys.path.append(parent_dir)
 
 import h5py
 
-from analysis.extract_activation import extract_activation, get_model, get_tokenizer
+from analysis.extract_activation import extract_activation
+from models.model import get_hf_model, get_tokenizer
 from MATH_logic.dataset_utils.dataset_splitting import build_ood_eval_dataset
 
 ACTIVATION_DATASET_PATH = "activation_dataset"
@@ -13,14 +14,8 @@ ACTIVATION_DATASET_PATH = "activation_dataset"
 RLVR_PATH = "rlvr_model_math"
 SFT_PATH = "sftt_model_math"
 
-VALID_MODULES = {
-    "mlp_output_act",
-    "attn_out_act",
-    "resid_pre_act"
-}
-
 def get_activation_dataset():
-    gen_model = get_model(RLVR_PATH)
+    gen_model = get_hf_model(RLVR_PATH)
     gen_tokenizer = get_tokenizer(RLVR_PATH)
     gen_dataset = build_ood_eval_dataset(
         tokenizer=gen_tokenizer,
@@ -94,11 +89,11 @@ def slice_samples_from_act(act_dataset, starts, ends):
     return [act_dataset[s:e] for s, e in zip(starts, ends)]
 
 
-def stack_layers_for_samples(layer_groups, act_name, starts, ends):
+def stack_layers_for_samples(layer_groups, model_group, act_name, starts, ends):
     per_layer_samples = []
 
     for l_group in layer_groups:
-        act_dataset = l_group[act_name]
+        act_dataset = model_group[l_group][act_name]
         layer_samples = slice_samples_from_act(
             act_dataset=act_dataset,
             starts=starts,
@@ -123,6 +118,7 @@ def load_sample_batch(
     act_modules,
     layers,
     h5_path,
+    max_sample
 ):
     activation_out = {}
 
@@ -130,18 +126,21 @@ def load_sample_batch(
         model_groups = extract_model_groups(model_names=model_names, h5_file=f)
 
         for m_group in model_groups:
-            model_name = m_group.name.split("/")[-1]
+            model_group = f[m_group]
+            model_name = model_group.name.split("/")[-1]
             activation_out[model_name] = {
                 "prompt_len": {},
                 "completion_len": {},
                 "total_len": {},
-                **{act_name: {} for act_name in act_modules}
+                **{act_name: {} for act_name in act_modules if type(act_modules) == list }
             }
 
-            index_group = m_group["index"]
+            index_group = model_group["index"]
             n_samples = len(index_group["sample_id"])
+            if max_sample is not None:
+                n_samples = min(n_samples, max_sample)
 
-            layer_groups = extract_layer_groups(model=m_group, layers=layers)
+            layer_groups = extract_layer_groups(model=model_group, layers=layers)
 
             for i in range(0, n_samples, batch_size):
                 sample_ids, starts, ends, prompt_lens, completion_lens, total_lens = get_batch_index(
@@ -162,9 +161,10 @@ def load_sample_batch(
                         act_name=act_name,
                         starts=starts,
                         ends=ends,
+                        model_group=model_group
                     )
 
                     for sid, sample_arr in zip(sample_ids, batch_samples):
                         activation_out[model_name][act_name][int(sid)] = sample_arr
 
-    return activation_out
+    return activation_out, layer_groups
