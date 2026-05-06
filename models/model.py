@@ -4,7 +4,11 @@ project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..
 sys.path.append(project_root)
 
 import torch as th
+
+from models.rope_theta import get_rope_theta
+
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from transformer_lens import HookedTransformer
 
 MODEL_ID = 'Qwen/Qwen2.5-1.5B'
 
@@ -21,7 +25,7 @@ def get_tokenizer(model_path = None):
     tokenizer.padding_side = 'left'
     return tokenizer
 
-def get_model(model_path = None):
+def get_hf_model(model_path = None):
     if not model_path: 
         model_path = MODEL_ID
     return AutoModelForCausalLM.from_pretrained(
@@ -29,3 +33,19 @@ def get_model(model_path = None):
         torch_dtype = th.bfloat16,
         attn_implementation = 'flash_attention_2',
     )
+
+def load_tl_model(model_pth, device, n_ctx=None):
+    # Build a TransformerLens model for one checkpoint variant.
+    tl_model = HookedTransformer.from_pretrained_no_processing(
+        MODEL_ID,
+        hf_model=get_hf_model(model_pth),
+        tokenizer=get_tokenizer(model_pth),
+        device=device,
+        dtype=th.bfloat16,
+        n_ctx=n_ctx,
+    )
+
+    # Keep the config aligned with the runtime context window.
+    tl_model.cfg.n_ctx = n_ctx
+    tl_model.eval().to(device)
+    return tl_model

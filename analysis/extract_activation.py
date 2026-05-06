@@ -5,11 +5,9 @@ parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
 
 import torch as th
-from transformer_lens import HookedTransformer
 from tqdm import tqdm
 
-from models.model import MODEL_ID, get_model, get_tokenizer
-from models.rope_theta import get_rope_theta
+from models.model import load_tl_model
 from analysis.generation import generate_reasoning
 from analysis.organize_activation import ACTIVATION_BLOCKS, append_cache_to_single_h5
 
@@ -148,28 +146,9 @@ def save_metadata(metadata, metadata_path, max_new_tokens, batch_size, do_sample
     th.save(payload, metadata_path)
     return payload
 
-
-def load_tl_model(model_pth, n_ctx=DEFAULT_N_CTX):
-    # Build a TransformerLens model for one checkpoint variant.
-    tl_model = HookedTransformer.from_pretrained_no_processing(
-        MODEL_ID,
-        hf_model=get_model(model_pth),
-        tokenizer=get_tokenizer(model_pth),
-        device=DEVICE,
-        dtype=th.bfloat16,
-        n_ctx=n_ctx,
-    )
-
-    # Keep the config aligned with the runtime context window.
-    tl_model.cfg.n_ctx = n_ctx
-    tl_model.eval().to(DEVICE)
-    return tl_model
-
-
 def get_interesting_layers(num_layers):
     # Extract only the first, middle and last layer.
     return [0, num_layers // 2, num_layers - 1]
-
 
 def extract_activation(
     max_new_tokens,
@@ -231,7 +210,7 @@ def extract_activation(
 
     for model_pth, model_name in tqdm(model_desc, desc="Extracting model activations"):
         # Load one model variant at a time to keep the memory footprint controlled.
-        tl_model = load_tl_model(model_pth=model_pth, n_ctx=DEFAULT_N_CTX)
+        tl_model = load_tl_model(model_pth=model_pth, devoce = DEVICE, n_ctx=DEFAULT_N_CTX)
         interesting_layers = get_interesting_layers(tl_model.cfg.n_layers)
         hook_names = get_hook_names(interesting_layers)
 
