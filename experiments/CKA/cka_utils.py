@@ -8,7 +8,14 @@ import numpy as np
 
 from analysis.activation_view import choose_slicing
 
-def build_cka_view(activation_out, model_names, act_name, layers, slicing_mode):
+def build_cka_view(
+    activation_out, 
+    model_names, 
+    act_name, 
+    layers, 
+    slicing_mode,
+    **slicing_kwargs    
+):
     reps = {}
     labels = []
     ordered_keys = []
@@ -27,7 +34,8 @@ def build_cka_view(activation_out, model_names, act_name, layers, slicing_mode):
                 slicing_mode=slicing_mode,
                 act = act, 
                 prompt_len=prompt_len,
-                completion_len=completion_len
+                completion_len=completion_len,
+                **slicing_kwargs   
             )
 
             if view.ndim == 2: # [L, d_model]   
