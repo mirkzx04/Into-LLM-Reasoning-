@@ -1,4 +1,5 @@
 import os 
+import re
 import sys
 parent_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.append(parent_dir)
@@ -6,16 +7,16 @@ sys.path.append(parent_dir)
 import h5py
 import numpy as np
 
-from analysis.extract_activation import extract_activation
-from models.model import get_hf_model, get_tokenizer
-from MATH_logic.dataset_utils.dataset_splitting import build_ood_eval_dataset
-
 ACTIVATION_DATASET_PATH = "activation_dataset"
 
 RLVR_PATH = "rlvr_model_math"
 SFT_PATH = "sftt_model_math"
 
 def get_activation_dataset():
+    from analysis.extract_activation import extract_activation
+    from models.model import get_hf_model, get_tokenizer
+    from MATH_logic.dataset_utils.dataset_splitting import build_ood_eval_dataset
+
     gen_model = get_hf_model(RLVR_PATH)
     gen_tokenizer = get_tokenizer(RLVR_PATH)
     gen_dataset = build_ood_eval_dataset(
@@ -84,7 +85,7 @@ def extract_model_groups(model_names, h5_file):
 def extract_layer_groups(model, layers):
     if layers is None:
         layer_groups = [k for k in model.keys() if k.startswith("layer")]
-        layer_groups = sorted(layer_groups)
+        layer_groups = sorted(layer_groups, key=layer_group_sort_key)
     else: 
         if isinstance(layers, str):
             layer_groups = [layers]
@@ -94,6 +95,39 @@ def extract_layer_groups(model, layers):
             raise TypeError("layers must be None, str or list[str]")
     
     return layer_groups
+
+
+def layer_group_sort_key(layer_name):
+    match = re.search(r"(\d+)$", layer_name)
+    if match is None:
+        return (1, layer_name)
+
+    return (0, int(match.group(1)))
+
+
+def format_layer_group_label(layer_name):
+    match = re.search(r"(\d+)$", layer_name)
+    if match is None:
+        return layer_name
+
+    return str(int(match.group(1)))
+
+
+def resolve_saved_layer_labels(h5_path, model_name=None, layers=None):
+    """
+    Resolve display labels from saved activation artifacts without loading tensors.
+    Reads only the HDF5 group structure.
+    """
+    with h5py.File(h5_path, "r") as f:
+        model_groups = extract_model_groups(model_names=model_name, h5_file=f)
+
+        if not model_groups:
+            raise ValueError(f"No model groups found in activation dataset: {h5_path}")
+
+        model_group = f[model_groups[0]]
+        layer_groups = extract_layer_groups(model=model_group, layers=layers)
+
+    return [format_layer_group_label(layer_name) for layer_name in layer_groups]
 
 def extract_act_module_groups(l_group, act_modules):
     # Mantengo il metodo, ma ora ritorna nomi logici richiesti.
