@@ -167,12 +167,17 @@ def get_selected_sample_rows(n_samples, max_sample, sample_seed):
 
 
 def get_index_rows(index_group, row_indices):
-    sample_ids = index_group["sample_id"][row_indices]
-    starts = index_group["start"][row_indices]
-    ends = index_group["end"][row_indices]
-    prompt_lens = index_group["prompt_len"][row_indices]
-    completion_lens = index_group["completion_len"][row_indices]
-    total_lens = index_group["total_len"][row_indices]
+    row_indices = np.asarray(row_indices)
+    sort_order = np.argsort(row_indices)
+    sorted_row_indices = row_indices[sort_order]
+    restore_order = np.argsort(sort_order)
+
+    sample_ids = index_group["sample_id"][sorted_row_indices][restore_order]
+    starts = index_group["start"][sorted_row_indices][restore_order]
+    ends = index_group["end"][sorted_row_indices][restore_order]
+    prompt_lens = index_group["prompt_len"][sorted_row_indices][restore_order]
+    completion_lens = index_group["completion_len"][sorted_row_indices][restore_order]
+    total_lens = index_group["total_len"][sorted_row_indices][restore_order]
     return sample_ids, starts, ends, prompt_lens, completion_lens, total_lens
 
 def slice_samples_from_act(act_dataset, starts, ends):
