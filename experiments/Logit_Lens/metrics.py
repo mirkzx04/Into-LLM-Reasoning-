@@ -36,7 +36,7 @@ def confidence_stats(logits, top_k=20):
     prob_margin = top1_prob - top2_prob          # [L, T]
     logit_margin = top_logits[..., 0] - top_logits[..., 1]
 
-    return top_ids, top_probs, top1_prob, prob_margin, logit_margin
+    return top_ids, top_probs, top1_prob, top2_prob, prob_margin, logit_margin
 
 
 def target_token_stats(logits, target_ids):

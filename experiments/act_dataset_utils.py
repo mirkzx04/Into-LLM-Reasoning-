@@ -152,6 +152,29 @@ def get_batch_index(index_group, start_idx, batch_size):
     total_lens = index_group["total_len"][start_idx:start_idx + batch_size]
     return sample_ids, starts, ends, prompt_lens, completion_lens, total_lens
 
+
+def get_selected_sample_rows(n_samples, max_sample, sample_seed):
+    selected_rows = np.arange(n_samples)
+
+    if sample_seed is not None:
+        rng = np.random.default_rng(sample_seed)
+        selected_rows = rng.permutation(selected_rows)
+
+    if max_sample is not None:
+        selected_rows = selected_rows[: min(n_samples, max_sample)]
+
+    return selected_rows
+
+
+def get_index_rows(index_group, row_indices):
+    sample_ids = index_group["sample_id"][row_indices]
+    starts = index_group["start"][row_indices]
+    ends = index_group["end"][row_indices]
+    prompt_lens = index_group["prompt_len"][row_indices]
+    completion_lens = index_group["completion_len"][row_indices]
+    total_lens = index_group["total_len"][row_indices]
+    return sample_ids, starts, ends, prompt_lens, completion_lens, total_lens
+
 def slice_samples_from_act(act_dataset, starts, ends):
     return [act_dataset[s:e] for s, e in zip(starts, ends)]
 
@@ -242,7 +265,8 @@ def load_sample_batch(
     act_modules,
     layers,
     h5_path,
-    max_sample
+    max_sample,
+    sample_seed=42,
 ):
     activation_out = {}
 
@@ -250,6 +274,7 @@ def load_sample_batch(
 
     with h5py.File(h5_path, "r") as f:
         model_groups = extract_model_groups(model_names=model_names, h5_file=f)
+        selected_rows = None
 
         for model_name in model_groups:
             model_group = f[model_name]
@@ -263,16 +288,21 @@ def load_sample_batch(
 
             index_group = model_group["index"]
             n_samples = len(index_group["sample_id"])
-            if max_sample is not None:
-                n_samples = min(n_samples, max_sample)
+
+            if selected_rows is None:
+                selected_rows = get_selected_sample_rows(
+                    n_samples=n_samples,
+                    max_sample=max_sample,
+                    sample_seed=sample_seed,
+                )
 
             layer_groups = extract_layer_groups(model=model_group, layers=layers)
 
-            for i in range(0, n_samples, batch_size):
-                sample_ids, starts, ends, prompt_lens, completion_lens, total_lens = get_batch_index(
+            for i in range(0, len(selected_rows), batch_size):
+                batch_rows = selected_rows[i:i + batch_size]
+                sample_ids, starts, ends, prompt_lens, completion_lens, total_lens = get_index_rows(
                     index_group=index_group,
-                    start_idx=i,
-                    batch_size=batch_size,
+                    row_indices=batch_rows,
                 )
 
                 for sid, p_len, c_len, t_len in zip(sample_ids, prompt_lens, completion_lens, total_lens):

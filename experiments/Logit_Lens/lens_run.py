@@ -18,6 +18,7 @@ from experiments.act_dataset_utils import (
 from experiments.Logit_Lens.get_lens import get_lens
 from experiments.Logit_Lens.lens_plot import (
     format_metric_markdown_tables,
+    has_probability_margin_table_inputs,
     infer_positions,
     plot_alignment_metric_panels,
     plot_sample_mean_metric_panels,
@@ -26,6 +27,7 @@ from experiments.Logit_Lens.lens_utils import lens_view
 
 
 LENS_OUT_METADATA_KEY = "__metadata__"
+MISSING_METADATA_FIELD = "<missing>"
 
 
 def create_model_comparison(model_names):
@@ -113,17 +115,68 @@ def save_lens_out(
     return output_path
 
 
-def build_lens_out_metadata(h5_path=None, layer_labels=None, shared_lens_source=None):
-    metadata = {}
+def normalize_metadata_value(value):
+    if th.is_tensor(value):
+        return value.detach().cpu().tolist()
 
-    if h5_path is not None:
-        metadata["h5_path"] = h5_path
+    if isinstance(value, tuple):
+        return [normalize_metadata_value(item) for item in value]
 
-    if layer_labels is not None:
-        metadata["layer_labels"] = list(layer_labels)
+    if isinstance(value, list):
+        return [normalize_metadata_value(item) for item in value]
 
-    if shared_lens_source is not None:
-        metadata["shared_lens_source"] = shared_lens_source
+    return value
+
+
+def build_file_metadata(file_path):
+    if file_path is None:
+        return None, None, None
+
+    normalized_path = os.path.abspath(file_path)
+
+    if not os.path.exists(normalized_path):
+        return normalized_path, None, None
+
+    file_stats = os.stat(normalized_path)
+    return normalized_path, file_stats.st_mtime, file_stats.st_size
+
+
+def build_lens_out_metadata(
+    h5_path=None,
+    token_cache_path=None,
+    positions=None,
+    act_modules=None,
+    lens_modes=None,
+    shared_lens_source=None,
+    max_sample=None,
+    batch_size=None,
+    sample_selection_seed=None,
+    layers=None,
+    layer_labels=None,
+    model_names=None,
+    sample_ids=None,
+):
+    h5_path, h5_mtime, h5_size = build_file_metadata(h5_path)
+    token_cache_path, token_cache_mtime, _token_cache_size = build_file_metadata(token_cache_path)
+
+    metadata = {
+        "h5_path": h5_path,
+        "h5_mtime": h5_mtime,
+        "h5_size": h5_size,
+        "token_cache_path": token_cache_path,
+        "token_cache_mtime": token_cache_mtime,
+        "positions": normalize_metadata_value(positions),
+        "act_modules": normalize_metadata_value(act_modules),
+        "lens_modes": normalize_metadata_value(lens_modes),
+        "shared_lens_source": shared_lens_source,
+        "max_sample": max_sample,
+        "batch_size": batch_size,
+        "sample_selection_seed": sample_selection_seed,
+        "layers": normalize_metadata_value(layers),
+        "layer_labels": normalize_metadata_value(layer_labels),
+        "model_names": normalize_metadata_value(model_names),
+        "sample_ids": normalize_metadata_value(sample_ids),
+    }
 
     return metadata
 
@@ -131,20 +184,60 @@ def build_lens_out_metadata(h5_path=None, layer_labels=None, shared_lens_source=
 def attach_lens_out_metadata(
     lens_out,
     h5_path=None,
+    token_cache_path=None,
+    positions=None,
+    act_modules=None,
+    lens_modes=None,
+    max_sample=None,
+    batch_size=None,
+    sample_selection_seed=None,
+    layers=None,
     layer_labels=None,
+    model_names=None,
+    sample_ids=None,
     shared_lens_source=None,
 ):
     lens_out_with_metadata = dict(lens_out)
     metadata = build_lens_out_metadata(
         h5_path=h5_path,
+        token_cache_path=token_cache_path,
+        positions=positions,
+        act_modules=act_modules,
+        lens_modes=lens_modes,
+        max_sample=max_sample,
+        batch_size=batch_size,
+        sample_selection_seed=sample_selection_seed,
+        layers=layers,
         layer_labels=layer_labels,
+        model_names=model_names,
+        sample_ids=sample_ids,
         shared_lens_source=shared_lens_source,
     )
 
-    if metadata:
-        lens_out_with_metadata[LENS_OUT_METADATA_KEY] = metadata
+    lens_out_with_metadata[LENS_OUT_METADATA_KEY] = metadata
 
     return lens_out_with_metadata
+
+
+def validate_lens_out_cache(lens_out, expected_metadata):
+    cached_metadata = lens_out.get(LENS_OUT_METADATA_KEY)
+
+    if not isinstance(cached_metadata, dict):
+        print("Cache invalid: missing '__metadata__'.")
+        return False
+
+    is_valid = True
+
+    for field_name, expected_value in expected_metadata.items():
+        cached_value = cached_metadata.get(field_name, MISSING_METADATA_FIELD)
+
+        if cached_value != expected_value:
+            print(f"Cache mismatch on field '{field_name}':")
+            print(f"cached = {cached_value}")
+            print(f"expected = {expected_value}")
+            is_valid = False
+
+    return is_valid
 
 
 def resolve_default_activation_h5_path():
@@ -222,6 +315,21 @@ def mean_metric_over_samples(metric_tensor):
     return metric_tensor.mean(dim=0)
 
 
+def std_metric_over_samples(metric_tensor):
+    if not th.is_tensor(metric_tensor):
+        metric_tensor = th.as_tensor(metric_tensor)
+
+    if metric_tensor.ndim != 2:
+        raise ValueError(
+            f"Expected metric tensor with shape [B, L], got {tuple(metric_tensor.shape)}"
+        )
+
+    if not th.is_floating_point(metric_tensor):
+        metric_tensor = metric_tensor.to(dtype=th.float32)
+
+    return metric_tensor.std(dim=0, unbiased=False)
+
+
 def build_distribution_metric_plots(
     lens_out,
     layer_labels=None,
@@ -246,7 +354,7 @@ def build_distribution_metric_plots(
     )
 
 
-def print_heatmap_markdown_tables(
+def print_metric_markdown_tables(
     lens_out,
     layer_labels=None,
     shared_lens_source=None,
@@ -261,13 +369,14 @@ def print_heatmap_markdown_tables(
         "mlp_resid",
     ]
 
-    print("=== HEATMAP RAW MEANS (MARKDOWN) ===")
+    print("=== RAW METRIC TABLES (MARKDOWN) ===")
 
     for metric_name in metric_names:
         markdown_tables = format_metric_markdown_tables(
             lens_out=lens_out,
             metric_name=metric_name,
             sample_reducer=mean_metric_over_samples,
+            std_reducer=std_metric_over_samples,
             lens_source_name=shared_lens_source,
             layer_labels=layer_labels,
             act_names=act_names,
@@ -313,37 +422,69 @@ def main():
     act_modules = ["resid_pre", "attn_resid", "mlp_resid"]
     normalized_positions = [0.1, 0.5, 0.9, 0.95]
     layers = None
-    lens_modes = ["shared"]
+    lens_modes = ["native"]
     shared_lens_source = "rlvr"
     layer_labels = None
+    batch_size = 10
+    max_sample = 100
+    sample_selection_seed = 42
+
+    act_dataset = get_activation_dataset()
+    h5_path = act_dataset["h5_path"]
+    token_cache_path = resolve_token_cache_path(h5_path)
+
+    activation_out, _layer_ids = load_sample_batch(
+        batch_size=batch_size,
+        model_names=None,
+        act_modules=act_modules,
+        layers=layers,
+        h5_path=h5_path,
+        max_sample=max_sample,
+        sample_seed=sample_selection_seed,
+    )
+    model_names = list(activation_out.keys())
+    layer_labels = [format_layer_group_label(layer_id) for layer_id in _layer_ids]
+    base_model_name = model_names[0]
+    sample_ids = sorted(activation_out[base_model_name][act_modules[0]].keys())
+
+    expected_metadata = build_lens_out_metadata(
+        h5_path=h5_path,
+        token_cache_path=token_cache_path,
+        positions=normalized_positions,
+        act_modules=act_modules,
+        lens_modes=lens_modes,
+        shared_lens_source=shared_lens_source,
+        max_sample=max_sample,
+        batch_size=batch_size,
+        sample_selection_seed=sample_selection_seed,
+        layers=layers,
+        layer_labels=layer_labels,
+        model_names=model_names,
+        sample_ids=sample_ids,
+    )
 
     output_dir_populated = has_populated_lens_outputs()
     output_path = resolve_lens_output_path(lens_modes, shared_lens_source)
 
+    lens_out = None
+
     if output_dir_populated and os.path.exists(output_path):
         print("=== LOADING EXISTING LENS OUT ===")
-        lens_out = th.load(output_path, map_location="cpu")
-        layer_labels = resolve_layer_labels_for_lens_out(lens_out, layers=layers)
-    else:
+        cached_lens_out = th.load(output_path, map_location="cpu")
+
+        if (
+            validate_lens_out_cache(cached_lens_out, expected_metadata)
+            and has_probability_margin_table_inputs(cached_lens_out)
+        ):
+            lens_out = cached_lens_out
+        else:
+            print("=== EXISTING LENS OUT CACHE INVALID: RECOMPUTING ===")
+
+    if lens_out is None:
         if not output_dir_populated:
             print("=== OUTPUTS EMPTY OR MISSING: POPULATING LENS OUT ===")
-        else:
+        elif not os.path.exists(output_path):
             print("=== TARGET LENS OUT MISSING: POPULATING LENS OUT ===")
-
-        act_dataset = get_activation_dataset()
-        h5_path = act_dataset["h5_path"]
-        token_cache_path = resolve_token_cache_path(h5_path)
-
-        activation_out, _layer_ids = load_sample_batch(
-            batch_size=10,
-            model_names=None,
-            act_modules=act_modules,
-            layers=layers,
-            h5_path=h5_path,
-            max_sample=100,
-        )
-
-        model_names = list(activation_out.keys())
         model_comparison = create_model_comparison(model_names)
         bank_lens = build_bank_lens(
             model_names=model_names,
@@ -362,11 +503,20 @@ def main():
             device=device,
             token_cache_path=token_cache_path,
         )
-        layer_labels = [format_layer_group_label(layer_id) for layer_id in _layer_ids]
         lens_out = attach_lens_out_metadata(
             lens_out,
             h5_path=h5_path,
+            token_cache_path=token_cache_path,
+            positions=normalized_positions,
+            act_modules=act_modules,
+            lens_modes=lens_modes,
+            max_sample=max_sample,
+            batch_size=batch_size,
+            sample_selection_seed=sample_selection_seed,
+            layers=layers,
             layer_labels=layer_labels,
+            model_names=model_names,
+            sample_ids=sample_ids,
             shared_lens_source=shared_lens_source,
         )
         output_path = save_lens_out(
@@ -387,7 +537,7 @@ def main():
         layer_labels=layer_labels,
         shared_lens_source=shared_lens_source,
     )
-    print_heatmap_markdown_tables(
+    print_metric_markdown_tables(
         lens_out,
         layer_labels=layer_labels,
         shared_lens_source=shared_lens_source,
