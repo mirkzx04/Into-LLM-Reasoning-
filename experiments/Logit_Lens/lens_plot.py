@@ -12,7 +12,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch as th
 
-from experiments.Logit_Lens.metrics_derived import (
+from experiments.Logit_Lens.lens_metrics_derived import (
     component_logprob_gain,
     delta_jaccard,
     delta_pairwise_DKL,
@@ -212,7 +212,6 @@ def build_comparison_plot_output_path(
 
     return os.path.join(
         output_root,
-        "comparison",
         sanitize_path_part(module_name),
         sanitize_path_part(lens_mode),
         filename,
@@ -235,7 +234,6 @@ def build_metric_plot_output_path(
 
     return os.path.join(
         output_root,
-        "comparison",
         sanitize_path_part(module_name),
         sanitize_path_part(lens_mode),
         "__".join(filename_parts) + ".png",
@@ -284,7 +282,6 @@ def build_component_delta_table_output_path(
 ):
     return os.path.join(
         output_root,
-        "comparison",
         sanitize_path_part(module_name),
         sanitize_path_part(lens_mode),
         "tables",

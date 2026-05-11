@@ -27,7 +27,7 @@ from experiments.Logit_Lens.lens_plot import (
     plot_pairwise_dkl_delta,
     plot_pairwise_jaccard_delta,
 )
-from experiments.Logit_Lens.metrics_derived import format_target_logprob_residual_table
+from experiments.Logit_Lens.lens_metrics_derived import format_target_logprob_residual_table
 from experiments.Logit_Lens.lens_utils import lens_view
 
 

@@ -8,7 +8,7 @@ from experiments.tok_dataset_utils import (
     build_token_index,
 )
 
-from experiments.Logit_Lens.metrics import (
+from experiments.Logit_Lens.lens_metrics import (
     topk_token_ids,
     target_token_stats,
     kl_divergence_logits,
