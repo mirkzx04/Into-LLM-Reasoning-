@@ -3,16 +3,13 @@ import torch as th
 from itertools import product
 from tqdm import tqdm
 
-from analysis.activation_view import choose_slicing
-
 from experiments.tok_dataset_utils import (
     load_token_cache,
     build_token_index,
 )
 
 from experiments.Logit_Lens.metrics import (
-    logit_entropy,
-    confidence_stats,
+    topk_token_ids,
     target_token_stats,
     kl_divergence_logits,
     topk_jaccard,
@@ -28,16 +25,13 @@ def build_jobs(
     jobs = []
 
     for position, act_name, lens_mode in product(norm_positions, act_names, lens_modes):
-        jobs.append(
-            {
-                "position": position,
-                "act_name": act_name,
-                "lens_mode": lens_mode,
-            }
-        )
+        jobs.append({
+            "position": position,
+            "act_name": act_name,
+            "lens_mode": lens_mode,
+        })
 
     return jobs
-
 
 def slice_tokens(
     tokens,
@@ -46,18 +40,37 @@ def slice_tokens(
     prompt_len,
     completion_len,
 ):
-    # Compute the same normalized completion position used for activations.
-    rel_idx = int(round((completion_len - 1) * position))
+    _, _, target_idx = resolve_predictive_completion_indices(
+        position=position,
+        prompt_len=prompt_len,
+        completion_len=completion_len,
+        direction=direction,
+    )
+    return tokens[target_idx]
+
+
+def resolve_predictive_completion_indices(
+    position,
+    prompt_len,
+    completion_len,
+    direction=1,
+):
+    if completion_len < 2:
+        raise ValueError("completion_len must be >= 2 to select a completion token with an in-range next token")
+
+    # For next-token prediction within the completion, only the first
+    max_predictive_rel_idx = completion_len - 2
+    rel_idx = int(round(max_predictive_rel_idx * position))
+    rel_idx = max(0, min(rel_idx, max_predictive_rel_idx))
+
     act_idx = prompt_len + rel_idx
 
-    # direction=1 means:
-    # activation at act_idx predicts token at act_idx + 1.
     if direction == -1:
         target_idx = act_idx - 1
     else:
         target_idx = act_idx + 1
 
-    return tokens[target_idx]
+    return rel_idx, act_idx, target_idx
 
 
 def build_lens_out(
@@ -72,13 +85,6 @@ def build_lens_out(
         act_name = j["act_name"]
         lens_mode = j["lens_mode"]
 
-        if not isinstance(position, float):
-            raise TypeError("position must be a float")
-        if not isinstance(act_name, str):
-            raise TypeError("act_name must be a string")
-        if not isinstance(lens_mode, str):
-            raise TypeError("lens_mode must be a string")
-
         if position not in lens_out:
             lens_out[position] = {}
 
@@ -91,18 +97,8 @@ def build_lens_out(
         # Single-model metrics.
         for model_name in model_names:
             lens_out[position][act_name][lens_mode][model_name] = {
-                "entropy": [],
-                "eff_vocab": [],
-                "top1_prob": [],
-                "top2_prob": [],
-                "prob_margin": [],
-                "logit_margin": [],
-                "top1_token_id": [],
-                "top2_token_id": [],
                 "target_logprob": [],
-                "target_prob": [],
-                "surprisal": [],
-                "target_rank": [],
+                "target_rank" : [],
                 "sample_ids": [],
             }
 
@@ -119,41 +115,21 @@ def build_lens_out(
 
 
 def append_model_metrics(
-    model_metrics,
-    entropy,
-    eff_vocab,
-    top1_prob,
-    top2_prob,
-    prob_margin,
-    logit_margin,
-    top1_token_id,
-    top2_token_id,
     target_logprob,
-    target_prob,
-    surprisal,
     target_rank,
-    sid,
+    model_metrics,
+    sid
 ):
-    # Each metric has shape [L] before aggregation.
-    model_metrics["entropy"].append(entropy.detach().cpu())
-    model_metrics["eff_vocab"].append(eff_vocab.detach().cpu())
-    model_metrics["top1_prob"].append(top1_prob.detach().cpu())
-    model_metrics["top2_prob"].append(top2_prob.detach().cpu())
-    model_metrics["prob_margin"].append(prob_margin.detach().cpu())
-    model_metrics["logit_margin"].append(logit_margin.detach().cpu())
-    model_metrics["top1_token_id"].append(top1_token_id.detach().cpu())
-    model_metrics["top2_token_id"].append(top2_token_id.detach().cpu())
+    if target_logprob.ndim == 2 and target_logprob.shape[-1] == 1:
+        target_logprob = target_logprob.squeeze(-1)
+    if target_rank.ndim == 2 and target_rank.shape[-1] == 1:
+        target_rank = target_rank.squeeze(-1)
 
-    # target_token_stats returns [L, 1], so squeeze the singleton T dimension.
-    model_metrics["target_logprob"].append(target_logprob.squeeze(-1).detach().cpu())
-    model_metrics["target_prob"].append(target_prob.squeeze(-1).detach().cpu())
-    model_metrics["surprisal"].append(surprisal.squeeze(-1).detach().cpu())
-    model_metrics["target_rank"].append(target_rank.squeeze(-1).detach().cpu())
-
+    model_metrics["target_logprob"].append(target_logprob.detach().cpu())
+    model_metrics["target_rank"].append(target_rank.detach().cpu())
     model_metrics["sample_ids"].append(int(sid))
 
     return model_metrics
-
 
 def compute_comparison_metrics(
     model_comparison,
@@ -170,14 +146,10 @@ def compute_comparison_metrics(
         # sid_logits[m]: [L, V]
         # sid_top_ids[m]: [L, K]
         kl = kl_divergence_logits(sid_logits[m1], sid_logits[m2])
-        jaccard = topk_jaccard(sid_top_ids[m1], sid_top_ids[m2])
+        lens_out[position][act_name][lens_key][comp_key]["kl_divergence"].append(kl.detach().cpu())
 
-        lens_out[position][act_name][lens_key][comp_key]["kl_divergence"].append(
-            kl.detach().cpu()
-        )
-        lens_out[position][act_name][lens_key][comp_key]["topk_jaccard"].append(
-            jaccard.detach().cpu()
-        )
+        jaccard = topk_jaccard(sid_top_ids[m1], sid_top_ids[m2])
+        lens_out[position][act_name][lens_key][comp_key]["topk_jaccard"].append(jaccard.detach().cpu())
 
 
 def aggregation_stack(
@@ -234,16 +206,16 @@ def resolve_lens(
 
 
 def apply_lens(active_lens, act):
-    # Match the activation dtype to the lens dtype before the forward pass.
-    # Then cast logits back to float32 for stable metric computation.
-    lens_dtype = next(active_lens.parameters()).dtype
-    act_for_lens = act.to(dtype=lens_dtype)
+    lens_param = next(active_lens.parameters(), None)
+    lens_dtype = lens_param.dtype if lens_param is not None else act.dtype
+    lens_device = lens_param.device if lens_param is not None else act.device
+
+    act_for_lens = act.to(device=lens_device, dtype=lens_dtype)
 
     with th.no_grad():
         logits = active_lens(act_for_lens)
 
     return logits.to(dtype=th.float32)
-
 
 def lens_view(
     views,
@@ -314,18 +286,20 @@ def lens_view(
 
                     if position is not None:
                         # State view:
-                        # position_normalized_completion selects act[:, prompt_len + rel_idx, :].
-                        # This state predicts the next token, so target is full_tokens[act_idx + 1].
-                        act = choose_slicing(
-                            slicing_mode="position_normalized_completion",
-                            act=act,
+                        # select one completion token state t and evaluate the
+                        # prediction of token t + 1. The last completion token is
+                        # excluded because full_tokens has no in-range successor.
+                        _, act_idx, _ = resolve_predictive_completion_indices(
+                            position=position,
                             prompt_len=prompt_len,
                             completion_len=completion_len,
-                            normalized_pos=position,
-                        )  # [L, D]
-
+                            direction=1,
+                        )
+                        act = act[:, act_idx, :]  # [L, D]
                         logits = apply_lens(active_lens=active_lens, act=act)  # [L, V]
+                        logits_for_target = logits[:, None, :]
 
+                        # target_token_stats expects target_ids with shape [T].
                         target_id = slice_tokens(
                             tokens=full_tokens,
                             position=position,
@@ -333,19 +307,9 @@ def lens_view(
                             prompt_len=prompt_len,
                             completion_len=completion_len,
                         )
-
-                        # target_token_stats expects target_ids with shape [T].
-                        # Here T=1 because we are analyzing one selected token position.
-                        target_ids = th.tensor(
-                            [target_id], dtype=th.long, device=device
-                        )
-
-                        # target_token_stats expects logits [L, T, V].
-                        logits_for_target = logits[:, None, :]  # [L, 1, V]
-
+                        target_ids = th.tensor([target_id], dtype=th.long, device=device)
                     else:
                         # Fallback view: use a fixed late-sequence activation.
-                        # This keeps your original behavior.
                         act = act[:, seq_len - 10, :]  # [L, D]
                         logits = apply_lens(active_lens=active_lens, act=act)  # [L, V]
 
@@ -353,49 +317,25 @@ def lens_view(
                         logits_for_target = None
 
                     # Single-model metrics from logits [L, V].
-                    entropy, eff_vocab = logit_entropy(logits=logits)
-
-                    top_ids, _top_probs, top1_prob, top2_prob, prob_margin, logit_margin = confidence_stats(
-                        logits=logits,
-                        top_k=10,
-                    )
-
-                    if target_ids is not None:
-                        target_logprob, target_prob, surprisal, target_rank = target_token_stats(
+                    top_ids = topk_token_ids(logits=logits, top_k=20)
+                    if target_ids is not None :
+                        target_logprob, target_rank = target_token_stats(
                             logits=logits_for_target,
                             target_ids=target_ids,
                         )
-                    else:
-                        # Same layer shape as entropy/top1 metrics.
+                    else : 
                         n_layers = logits.shape[0]
-
-                        target_logprob = th.zeros(n_layers, device=device)
-                        target_prob = th.zeros(n_layers, device=device)
-                        surprisal = th.zeros(n_layers, device=device)
-                        target_rank = th.zeros(n_layers, device=device)
-
-                    sid_logits[model_name] = logits
+                        target_logprob, target_rank = th.zeros(n_layers, device = device), th.zeros(n_layers, device=device)
+                
+                    sid_logits[model_name] = logits 
                     sid_top_ids[model_name] = top_ids
 
-                    metrics_ref = lens_out[position][act_name][lens_mode][
-                        model_name
-                    ]
-
+                    metric_ref = lens_out[position][act_name][lens_mode][model_name]
                     append_model_metrics(
-                        metrics_ref,
-                        entropy,
-                        eff_vocab,
-                        top1_prob,
-                        top2_prob,
-                        prob_margin,
-                        logit_margin,
-                        top_ids[..., 0],
-                        top_ids[..., 1],
-                        target_logprob,
-                        target_prob,
-                        surprisal,
-                        target_rank,
-                        sid,
+                        target_logprob=target_logprob,
+                        target_rank=target_rank,
+                        model_metrics=metric_ref,
+                        sid=sid
                     )
 
                 compute_comparison_metrics(
@@ -417,5 +357,5 @@ def lens_view(
                 lens_key=lens_mode,
                 model_comparison=model_comparison,
             )
-
+                      
     return lens_out

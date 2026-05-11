@@ -12,6 +12,11 @@ ACTIVATION_DATASET_PATH = "activation_dataset"
 RLVR_PATH = "rlvr_model_math"
 SFT_PATH = "sftt_model_math"
 
+DERIVED_RESIDUAL_COMPONENTS = {
+    "attn_resid": ("resid_pre_act", "attn_out_act"),
+    "mlp_resid": ("resid_pre_act", "attn_out_act", "mlp_out_act"),
+}
+
 def get_activation_dataset():
     from analysis.extract_activation import extract_activation
     from models.model import get_hf_model, get_tokenizer
@@ -187,6 +192,9 @@ def build_samples_for_act(layer_group, act_name, starts, ends):
     """
     Costruisce i sample per un singolo layer.
     Supporta sia attivazioni salvate direttamente sia residuali derivati.
+    I residuali derivati sono cumulativi:
+    - attn_resid = resid_pre_act + attn_out_act
+    - mlp_resid = resid_pre_act + attn_out_act + mlp_out_act
     """
     if act_name == "resid_pre":
         return slice_samples_from_act(
@@ -195,43 +203,29 @@ def build_samples_for_act(layer_group, act_name, starts, ends):
             ends=ends,
         )
 
-    if act_name == "attn_resid":
-        resid_pre_samples = slice_samples_from_act(
-            act_dataset=layer_group["resid_pre_act"],
-            starts=starts,
-            ends=ends,
-        )
-        attn_out_samples = slice_samples_from_act(
-            act_dataset=layer_group["attn_out_act"],
-            starts=starts,
-            ends=ends,
-        )
-        return [
-            resid_pre + attn_out
-            for resid_pre, attn_out in zip(resid_pre_samples, attn_out_samples)
+    if act_name in DERIVED_RESIDUAL_COMPONENTS:
+        missing_components = [
+            component
+            for component in DERIVED_RESIDUAL_COMPONENTS[act_name]
+            if component not in layer_group
+        ]
+        if missing_components:
+            raise KeyError(
+                f"Cannot build cumulative {act_name}; missing components: {missing_components}"
+            )
+
+        component_samples = [
+            slice_samples_from_act(
+                act_dataset=layer_group[component],
+                starts=starts,
+                ends=ends,
+            )
+            for component in DERIVED_RESIDUAL_COMPONENTS[act_name]
         ]
 
-    if act_name == "mlp_resid":
-        resid_pre_samples = slice_samples_from_act(
-            act_dataset=layer_group["resid_pre_act"],
-            starts=starts,
-            ends=ends,
-        )
-        attn_out_samples = slice_samples_from_act(
-            act_dataset=layer_group["attn_out_act"],
-            starts=starts,
-            ends=ends,
-        )
-        mlp_out_samples = slice_samples_from_act(
-            act_dataset=layer_group["mlp_out_act"],
-            starts=starts,
-            ends=ends,
-        )
         return [
-            resid_pre + attn_out + mlp_out
-            for resid_pre, attn_out, mlp_out in zip(
-                resid_pre_samples, attn_out_samples, mlp_out_samples
-            )
+            sum(sample_parts[1:], sample_parts[0].copy())
+            for sample_parts in zip(*component_samples)
         ]
 
     # Caso base: attivazione già salvata in HDF5
