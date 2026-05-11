@@ -196,4 +196,4 @@ To quantify parameter updates, we calculate the distance between the weight matr
 
 To look deeper, we use **Singular Value Decomposition (SVD)** on the matrix representing the difference between weights. If RLVR is just a steering mechanism, these weight updates should show a "low rank"—meaning the changes are concentrated in a few specific routing heads rather than being spread across the MLP knowledge layers.
 
-*Per approfondimenti sugli esperimenti puoi leggere :* 
+*For a more in-depth analysis of the experiments, you can refer to::* [experiments](doc/experiments.md)
