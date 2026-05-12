@@ -1,3 +1,145 @@
+## Abstract 
+Reinforcement Learning from Verifiable Rewards (RLVR) improves problem-solving skills in LLMs. In this project, I will fine-tune open-weights models to investigate the underlying reasoning mechanisms acquired during RLVR. Training is conducted using the GSM8K dataset for mathematical reasoning and the HumanEval dataset for coding tasks. We aim to understand how RLVR enhances mathematical and algorithmic reasoning capabilities at a mechanistic level.
+
+## Goal 
+The academic community is currently debating how RLVR alters model parameters. Specifically, it remains unclear whether the model already possesses the necessary knowledge (with RLVR merely creating routing pathways to extract the correct answer) or if RLVR induces the creation of novel features.
+
+Considering the transformer architecture as a residual stream manipulated by Attention Heads and Multi-Layer Perceptrons (MLPs), we aim to investigate the extent to which RLVR modifies internal representations versus merely acting as a behavioral wrapper.
+
+To formalize this, we define two competing hypotheses:
+
+*   **Steering Hypothesis (H0):** RLVR acts purely as a routing mechanism. It modifies the Attention circuits to steer pre-existing knowledge without creating new features in the MLPs.
+*   **Representation Learning Hypothesis (H1):** RLVR forces the crystallization of new logical circuits, fundamentally altering the latent features encoded within the MLP layers.
+
+To test these hypotheses, we analyze three distinct training phases:
+1.   **Vanilla Phase:** The base pre-trained model before any domain-specific exposure.
+2.   **Supervised Fine-Tuning (SFT) Phase:** The model trained via next-token prediction (acting as a baseline for formatting and basic knowledge).
+3.   **RLVR Phase:** The model fine-tuned using RLVR on the same datasets.
+
+By isolating these internal components, we study:
+*   **Self-Attention:** To evaluate if RLVR establishes pathways toward the correct answer.
+*   **MLP:** To check if RLVR alters weights or activations within the feed-forward layers, which would suggest the acquisition of new knowledge.
+
+---
+
+# Training Setup
+
+## Supervised Fine-Tuning
+For the SFT stage, I used the NuminaMath-CoT dataset. This provides the model with basic mathematical reasoning patterns, solution structures, and the desired response format required before applying RLVR.
+
+## RLVR Training
+I constructed a mixed mathematical dataset using GSM8K, MATH-Lighteval (filtered by level), and DAPO-Math-17k. While SFT teaches the model to imitate traces, RLVR optimizes the model toward solution trajectories that maximize verifiable correctness.
+
+## RLVR Configuration
+Using the Hugging Face `trl` library, specifically `GRPOConfig` and `GRPOTrainer`:
+*   **Learning Rate:** 2e-6
+*   **Max Completion Length:** 2000
+*   **Loss Type:** DAPO (chosen for its effectiveness with variable completion lengths).
+*   **Infrastructure:** DeepSpeed for memory efficiency and vLLM for fast generation sampling.
+
+---
+
+# Experiments
+
+## Dataset Building
+We constructed a dataset of internal activations extracted from the BASE, SFT, and RLVR versions of the model. To ensure comparability, we use the RLVR model to generate a completion, then feed that exact sequence into all three models to extract activations at the same textual positions.
+
+The sequence consists of the prompt and the completion. For every model and selected layer, we save:
+*   **Pre-residual:** The input stream entering the layer.
+*   **MLP output:** The specific contribution of the MLP block.
+*   **Attention output:** The specific contribution of the Self-Attention block.
+
+In a standard transformer layer, the "middle" residual state is the sum of the **pre-residual** and the **attention output**. The final "post-residual" state is the sum of that **middle state** and the **MLP output**.
+
+### Activation Dataset Reproducibility
+
+To reproduce the activation dataset, run `get_activation_dataset` from `experiments/experiments_main.py`.
+
+This function builds a shared token cache using a generator model, then replays the same prompt-completion sequences through all model variants to extract comparable activations.
+
+### Main inputs
+
+- `gen_model`: model used to generate the completion.
+- `gen_tokenizer`: tokenizer associated with `gen_model`.
+- `gen_dataset`: dataset used for generation.
+- `model_desc`: list of `(model_path, model_name)` pairs for the models to compare.
+- `save_path`: directory where the activation dataset will be saved.
+- `generator_name`: identifier of the model used for generation.
+- `ood_dataset_name`: identifier of the evaluation dataset.
+- `max_new_tokens`: maximum completion length used during generation.
+
+### Saved files
+
+Running the pipeline creates:
+
+- `save_path/<dataset_name>.h5`: activation dataset in HDF5 format
+- `save_path/<dataset_name>_metadata.pt`: lightweight metadata for the activation dataset
+- `save_path/tokens_cache/<token_cache_prefix>.pt`: full token cache
+- `save_path/tokens_cache/<token_cache_prefix>.jsonl`: JSONL export of the token cache
+
+### Extraction procedure
+
+1. The generator model produces one completion for each prompt in `gen_dataset`.
+2. Prompt tokens and generated completion tokens are saved in a token cache.
+3. The same full sequence (`prompt + completion`) is replayed through every model listed in `model_desc`.
+4. Activations are extracted at the same token positions for all compared models.
+
+### Current activation setup
+
+At the moment, activations are extracted for:
+- the first layer
+- the middle layer
+- the last layer
+
+For each selected layer, the following activations are stored:
+- `resid_pre_act`
+- `attn_out_act`
+- `mlp_out_act`
+
+The saved token positions cover the full sequence:
+- all prompt tokens
+- all completion tokens
+
+### HDF5 structure
+
+```text
+<dataset_name>.h5
+│
+├── <model_name_1>/
+│   ├── index/
+│   │   ├── sample_id
+│   │   ├── start
+│   │   ├── end
+│   │   ├── prompt_len
+│   │   ├── completion_len
+│   │   └── total_len
+│   │
+│   ├── layer_00/
+│   │   ├── mlp_out_act      # [total_tokens, d_model]
+│   │   ├── attn_out_act     # [total_tokens, d_model]
+│   │   └── resid_pre_act    # [total_tokens, d_model]
+│   │
+│   ├── layer_XX/
+│   │   ├── mlp_out_act
+│   │   ├── attn_out_act
+│   │   └── resid_pre_act
+│   │
+│   └── layer_YY/
+│       ├── mlp_out_act
+│       ├── attn_out_act
+│       └── resid_pre_act
+│
+└── <model_name_2>/
+    ...
+```
+
+Here, `start` and `end` define the row span of each sample inside the flattened activation matrices.
+
+### Notes
+* The exact group names at the top level of the HDF5 file depend on the `model_name` values passed in `model_desc`.
+* If you want to change which layers are extracted, modify the layer-selection logic in `extract_activation.py`.
+* The token cache `.pt` file stores the generated tokenized dataset, while the `*_metadata.pt` file stores only lightweight metadata about the activation dataset.
+
 ## 1. Component-Level Representation Comparison Summary
 
 This analysis compares internal representations across three model training stages—**BASE**, **SFT**, and **RLVR**—to determine if fine-tuning causes large global changes in the geometry of Attention and MLP outputs. We compute **linear Centered Kernel Alignment (CKA)** between pairs of model-layer representations using two component outputs: `attn_out_act` and `mlp_out_act`. 
@@ -6,7 +148,7 @@ Activations of shape `[L, seq_len, d_model]` are sliced into `[N, d_model]` matr
 
 ---
 
-### 1.2 Last Input Token 
+### 1.1 Last Input Token 
 We study the geometry of the activations at the position of the last input token, that is, in the state that conditions the distribution of the first token generated by the model.
 
 #### MLP 
@@ -264,3 +406,47 @@ The addition of the MLP has made the common tokens between the intermediate and 
 ![](../experiments/Logit_Lens/logit_lens_img/pairwise_jaccard_delta/native/delta_jaccard.png)
 
 We can notice how (base, rlvr) is always below zero in the last layer, indicating that it is the MLP that encourages different tokens between the two models. As seen in [Towards a Mechanistic Understanding of LRM - A survey of training and inference.](https://arxiv.org/pdf/2601.19928), RLVR models undergo two training stages; in the second stage, they learn to use optimal tokens. Observing our graphs, it is plausible to think that the MLP might provide a greater contribution to optimal tokens by leveraging learned knowledge; we do not have certain proof of this, but it is a hypothesis that should not be excluded and is not entirely unrealistic.
+
+#### 2.1.2 Attention vs MLP Target Log-Probability Contribution
+*Suggestions for improving the tests: 1) Add token windows 2) Bootstrap Confidence Intervals 3) Increase the density of the analyzed layers*
+
+After extracting the logits by applying the lens to the activation, we calculate the log-probability on them: `log_probs = logits.log_softmax(dim = -1)`, after which we calculate:
+
+```python
+delta_attn_logprob = attn_resid - resid_pre
+delta_mlp_logprob  = mlp_resid - attn_resid
+
+```
+
+The two deltas measure how much the log-probability of the target token changes when adding the respective contribution of the Attention and MLP to the residual stream.
+We will then also analyze the gap between the two deltas; this analysis serves to confirm which component has a greater impact on the log-probability for predicting the target token. Specifically, we will analyze `delta_mlp_logprob - delta_attn_logprob`.
+
+**Delta Attention LogProb**
+Observing the graph, in the initial layer, the attention is the component that shifts the distribution towards the target token; in the deeper layers, however, the attention brings no change to the log-prob.
+
+Observing the graph that zooms in on the intermediate and final layers, we notice how the attention decreases its contribution to the target token. In the initial position, its effect on the log-prob is almost zero; in the subsequent positions, we see that the effect returns to being high, although closer to zero compared to the initial layer.
+In the last position, we also notice the first difference across the models: in sftt, the effect of the attention is lower compared to the effect it has on rlvr and base.
+
+|  |  |
+| :---: | :---: |
+|![](../experiments/Logit_Lens/logit_lens_img/component_logprob/native/delta_attn_logprob.png)       | ![](../experiments/Logit_Lens/logit_lens_img/component_logprob/native/delta_attn_logprob__without_layer0.png) 
+
+In the first two positions, the uncertainty bands go below zero, indicating that for some samples it is the MLP that shifts the distribution to favor the target token; in the last two positions, this effect has a smaller scale.
+
+**Delta MLP LogProb**
+Reconfirming what was seen previously, the graphs on the delta MLP log-prob show an MLP that does not favor the target token, especially in the first layers. Here too, the uncertainty bands show that the MLP shifts the probability score towards the token only in some samples.
+
+|  |  |
+| :---: | :---: |
+|![](../experiments/Logit_Lens/logit_lens_img/component_logprob/native/delta_mlp_logprob.png)       | ![](../experiments/Logit_Lens/logit_lens_img/component_logprob/native/delta_mlp_logprob__without_layer0.png)
+
+Zooming in on the last two analyzed layers, we can notice wider uncertainty bands that tend to go above zero, especially in the first and last positions. In the last position, the MLP is the one that shifts the distribution the least; in the rlvr model, however, the effect is the most marked.
+
+**Components Preference** The component preference shows how the **Delta Attention LogProb** is the one that tends to be larger; however, as the layers progress, it tends to become smaller. Confirming this are also the uncertainty bands, which show that the **Delta MLP LogProb** is higher in some samples, indicating that in those samples it is the MLP that shifts the scores onto the target token. The effect is most noticeable in position 0.95; in fact, looking at the zoomed-in graph on the intermediate and final layers, we notice how the uncertainty band of the sftt model is the one most prone to positive values.
+
+|  |  |
+| :---: | :---: |
+|![](../experiments/Logit_Lens/logit_lens_img/component_logprob/native/component_preference.png)       | ![](../experiments/Logit_Lens/logit_lens_img/component_logprob/native/component_preference__without_layer0.png)
+
+Staying on the zoomed-in graph, we can also notice some differences between the models:
+In the initial position, we see that the sftt model is the one that generally tends towards more positive values. In the two subsequent positions, the differences between the models diminish, with the rlvr model being the one with the highest value at position 0.50; it nevertheless remains below zero, indicating that the attention is the component pointing more towards the target token. In the last position, a clear hierarchy is confirmed: the base model is the one where the attention points the most to the target token, while in the sftt model, the attention has a less marked effect on the log-prob.

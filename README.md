@@ -169,7 +169,7 @@ As seen in [Filtering with Self-Attention and Storing with MLP One Layer Transfo
 
 ## 2. Linear Probing & Causal Intervention
 ### 2.1 Native-Logit Lens 
-#### Component-Level Logit Divergence: Top-K Overlap and Symmetric KL
+#### 2.1.1 Component-Level Logit Divergence: Top-K Overlap and Symmetric KL
 We use Top-K Jaccard to quantify the overlap of the top-k predicted tokens across the models, we also use Symmetric KL Divergence to quantify how much the distributions on the logits differ. In this section we will look at the delta of Symmetric KL and the delta of Top-k Jaccard.
 
 **Delta Symmetric KL**
@@ -185,6 +185,23 @@ When the delta is less than zero it means that the Attention is more prone to re
 (base, rlvr) is the graph that always remains mostly below zero in the last layer, the deepest layer; as already mentioned before, it is precisely in the deepest layers where the major geometry change occurs, this indicates that the MLP incentivizes different tokens between the two models in that layer. In the paper [Towards a Mechanistic Undestanding of LRM - A survey of training and inference.](https://arxiv.org/pdf/2601.19928) it is shown how RLVR models face two training stages, in the second stage they learn to use the most optimal tokens. Observing the graphs it is plausible to think that it could be precisely the MLP that incentivizes the use of the most optimal tokens.
 
 ![](experiments/Logit_Lens/logit_lens_img/pairwise_jaccard_delta/native/delta_jaccard.png)
+
+#### 2.1.2 Attention vs MLP Target Log-Probability Contribution
+Generally, the attention is the module that shifts the probability distribution towards the target token; this is especially true for the initial layers. By zooming in on the intermediate and final layers, we can notice how in the first position in the sftt model, it is the MLP that has a greater effect on the distribution, shifting it towards the target token.
+
+|  |  |
+| :---: | :---: |
+|![](experiments/Logit_Lens/logit_lens_img/component_logprob/native/component_preference.png)       | ![](experiments/Logit_Lens/logit_lens_img/component_logprob/native/component_preference__without_layer0.png)
+
+In position 0.50 in the sftt model, the attention returns to dominate the Log-Probability distribution, while in the rlvr model, the effect of the attention module weakens. Position 0.95 is the one that shows a clearer hierarchy: the sftt model confirms itself as the one where the attention has a lighter effect on the distribution, but its uncertainty bands suggest that the MLP module has a greater weight on the prediction of the target token in some samples.
+
+### Interpretation
+
+The MLP module is the one more prone to shift the probabilistic mass of the output vocabulary. As seen from **Symmetric KL**, the distributions with the addition of the MLP to the residual signal tend to shift the probability mass, especially between the base and rlvr models. However, the MLP also has a second effect: introducing new tokens into the pool of tokens chosen in output by the model. This effect is not constant across all layers nor in all positions; it tends to be more marked in positions 0.10 and 0.50. This could indicate how the MLP changes the semantics of the internal reasoning; indeed, the MLP could be the module that inserts the optimal reasoning tokens within the pool of experts.
+
+Despite the MLP being the one to shift the probability mass and introduce some new tokens, it is the Attention module that points to the output token. The effect of the attention on the probability of the output token is higher than that of the MLP, especially in the initial layers.
+
+These two analyses indicate that the MLP is not the module choosing the output token; its effect is more tied to the internal representations of the model and to the probabilistic mass assigned by the model in the distribution over the output vocabulary. The change in geometries observed in CKA might have led precisely to this effect. The MLP might contribute more significantly to assigning a probability distribution to the output tokens. After the SFT and RLVR trainings, the MLP might shift the distribution onto new tokens, which could coincide with the optimal tokens that RLVR should prefer.
 
 ### 2.2 Linear Probing Answer
 We take the activation vector for a reasoning token and pass it through a linear layer with a Softmax function to calculate the probability of specific classes among A, B, C or D.
