@@ -1,6 +1,5 @@
 import os
 import sys
-from dataclasses import dataclass
 from itertools import combinations
 
 import torch as th
@@ -11,9 +10,17 @@ sys.path.append(project_root)
 from experiments.act_dataset_utils import (
     RLVR_PATH,
     SFT_PATH,
-    format_layer_group_label,
     get_activation_dataset,
-    load_sample_batch,
+)
+from experiments.experiments_conf import LensConfig
+from experiments.experiments_utils import (
+    LENS_OUT_METADATA_KEY,
+    abs_path_or_none,
+    attach_metadata,
+    load_activation_batch,
+    metadata_matches,
+    normalize_metadata_value,
+    resolve_token_cache_path,
 )
 from experiments.Logit_Lens.get_lens import get_lens
 from experiments.Logit_Lens.lens_plot import (
@@ -31,7 +38,6 @@ from experiments.Logit_Lens.lens_metrics_derived import format_target_logprob_re
 from experiments.Logit_Lens.lens_utils import lens_view
 
 
-LENS_OUT_METADATA_KEY = "__metadata__"
 CACHE_SCHEMA_VERSION = "minimal_logit_lens_v2_symmetric_dkl"
 
 SINGLE_MODEL_METRICS = (
@@ -43,27 +49,6 @@ PAIRWISE_METRICS = (
     "kl_divergence",
     "topk_jaccard",
 )
-
-
-@dataclass(frozen=True)
-class RunConfig:
-    positions: tuple = (0.1, 0.5, 0.9, 0.95)
-    act_modules: tuple = ("resid_pre", "attn_resid", "mlp_resid")
-    report_act_modules: tuple = ("attn_resid", "mlp_resid")
-    lens_modes: tuple = ("native",)
-    shared_lens_source: str = "rlvr"
-    layers: object = None
-    batch_size: int = 10
-    max_sample: int = 100
-    sample_selection_seed: int = 42
-
-
-@dataclass
-class ActivationBatch:
-    activation_out: dict
-    model_names: list
-    layer_labels: list
-    sample_ids: list
 
 
 def get_lens_output_dir():
@@ -78,43 +63,6 @@ def resolve_lens_output_path(lens_modes, shared_lens_source):
     lens_mode_tag = "_".join(lens_modes)
     output_name = f"lens_out_{lens_mode_tag}_shared-{shared_lens_source}.pt"
     return os.path.join(get_lens_output_dir(), output_name)
-
-
-def resolve_token_cache_path(h5_path):
-    activation_dir = os.path.dirname(h5_path)
-    dataset_name = os.path.splitext(os.path.basename(h5_path))[0]
-
-    if not dataset_name.endswith("_acts"):
-        raise ValueError(f"Unexpected activation dataset name: {dataset_name}")
-
-    token_prefix = dataset_name.removesuffix("_acts").replace("_max_", "_max")
-    token_cache_name = f"{token_prefix}_tok.pt"
-    token_cache_path = os.path.join(activation_dir, "tokens_cache", token_cache_name)
-
-    if not os.path.exists(token_cache_path):
-        raise FileNotFoundError(f"Token cache not found: {token_cache_path}")
-
-    return token_cache_path
-
-
-def normalize_metadata_value(value):
-    if th.is_tensor(value):
-        return value.detach().cpu().tolist()
-
-    if isinstance(value, tuple):
-        return [normalize_metadata_value(item) for item in value]
-
-    if isinstance(value, list):
-        return [normalize_metadata_value(item) for item in value]
-
-    return value
-
-
-def abs_path_or_none(path):
-    if path is None:
-        return None
-
-    return os.path.abspath(path)
 
 
 def build_cache_metadata(
@@ -149,26 +97,6 @@ def build_cache_metadata(
         metadata["sample_ids"] = normalize_metadata_value(sample_ids)
 
     return metadata
-
-
-def attach_metadata(lens_out, metadata):
-    lens_out = dict(lens_out)
-    lens_out[LENS_OUT_METADATA_KEY] = metadata
-    return lens_out
-
-
-def metadata_matches(cached_metadata, expected_metadata):
-    if not isinstance(cached_metadata, dict):
-        return False
-
-    for key, expected_value in expected_metadata.items():
-        if cached_metadata.get(key) != expected_value:
-            print(f"Cache mismatch on metadata field: {key}")
-            print(f"cached   = {cached_metadata.get(key)}")
-            print(f"expected = {expected_value}")
-            return False
-
-    return True
 
 
 def has_required_metrics(lens_out):
@@ -254,37 +182,6 @@ def build_bank_lens(model_names, device, shared_lens_source):
 
 def create_model_comparison(model_names):
     return list(combinations(model_names, 2))
-
-
-def load_activation_batch(config, h5_path):
-    activation_out, layer_ids = load_sample_batch(
-        batch_size=config.batch_size,
-        model_names=None,
-        act_modules=list(config.act_modules),
-        layers=config.layers,
-        h5_path=h5_path,
-        max_sample=config.max_sample,
-        sample_seed=config.sample_selection_seed,
-    )
-
-    model_names = list(activation_out.keys())
-
-    if not model_names:
-        raise ValueError("No models found in activation_out.")
-
-    layer_labels = [format_layer_group_label(layer_id) for layer_id in layer_ids]
-
-    base_model_name = model_names[0]
-    sample_ids = sorted(
-        activation_out[base_model_name][config.act_modules[0]].keys()
-    )
-
-    return ActivationBatch(
-        activation_out=activation_out,
-        model_names=model_names,
-        layer_labels=layer_labels,
-        sample_ids=sample_ids,
-    )
 
 
 def get_or_compute_lens_out(config):
@@ -493,7 +390,7 @@ def run_reports(lens_out, config, layer_labels=None):
 
 
 def main():
-    config = RunConfig()
+    config = LensConfig()
 
     lens_out, output_path, layer_labels = get_or_compute_lens_out(config)
 

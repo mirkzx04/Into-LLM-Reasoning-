@@ -212,6 +212,7 @@ def build_comparison_plot_output_path(
 
     return os.path.join(
         output_root,
+        "comparison",
         sanitize_path_part(module_name),
         sanitize_path_part(lens_mode),
         filename,
@@ -234,6 +235,7 @@ def build_metric_plot_output_path(
 
     return os.path.join(
         output_root,
+        "comparison",
         sanitize_path_part(module_name),
         sanitize_path_part(lens_mode),
         "__".join(filename_parts) + ".png",
@@ -282,6 +284,7 @@ def build_component_delta_table_output_path(
 ):
     return os.path.join(
         output_root,
+        "comparison",
         sanitize_path_part(module_name),
         sanitize_path_part(lens_mode),
         "tables",
