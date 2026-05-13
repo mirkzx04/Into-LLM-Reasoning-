@@ -8,6 +8,37 @@ from experiments.act_dataset_utils import format_layer_group_label, load_sample_
 
 LENS_OUT_METADATA_KEY = "__metadata__"
 
+ACT_MODULE_ALIASES = {
+    # direct outputs
+    "attn_out": "attn_out",
+    "attn_out_act": "attn_out",
+    "mlp_out": "mlp_out",
+    "mlp_out_act": "mlp_out",
+
+    # residual stream names
+    "resid_pre": "resid_pre",
+    "resid_pre_act": "resid_pre",
+    "resid_mid": "resid_mid",
+    "attn_resid": "resid_mid",
+    "resid_post": "resid_post",
+    "mlp_resid": "resid_post",
+}
+
+CANONICAL_TO_SAVED_ACT = {
+    "attn_out": "attn_out_act",
+    "mlp_out": "mlp_out_act",
+    "resid_pre": "resid_pre",
+    "resid_mid": "attn_resid",
+    "resid_post": "mlp_resid",
+}
+
+CANONICAL_TO_HOOK_COMPONENT = {
+    "attn_out": "attn_out",
+    "mlp_out": "mlp_out",
+    "resid_pre": "resid_pre",
+    "resid_mid": "resid_mid",
+    "resid_post": "resid_post",
+}
 
 @dataclass
 class ActivationBatch:
@@ -18,6 +49,35 @@ class ActivationBatch:
     layer_labels: list
     sample_ids: list
 
+def normalize_act_module_name(act_module):
+    act_module = str(act_module)
+
+    if act_module not in ACT_MODULE_ALIASES:
+        raise KeyError(
+            f"Unknown activation module: {act_module}. "
+            f"Supported names: {sorted(ACT_MODULE_ALIASES.keys())}"
+        )
+
+    return ACT_MODULE_ALIASES[act_module]
+
+
+def resolve_saved_act_name(act_module):
+    canonical_name = normalize_act_module_name(act_module)
+    return CANONICAL_TO_SAVED_ACT[canonical_name]
+
+
+def resolve_hook_component(act_module):
+    canonical_name = normalize_act_module_name(act_module)
+    return CANONICAL_TO_HOOK_COMPONENT[canonical_name]
+
+
+def resolve_act_module_names(act_module):
+    canonical_name = normalize_act_module_name(act_module)
+    return {
+        "canonical": canonical_name,
+        "saved": CANONICAL_TO_SAVED_ACT[canonical_name],
+        "hook_component": CANONICAL_TO_HOOK_COMPONENT[canonical_name],
+    }
 
 def normalize_metadata_value(value):
     """Convert tensors and tuples into cache-friendly Python values."""
@@ -93,13 +153,7 @@ def _as_list_or_none(value):
 
 def _normalize_act_module_name(act_module):
     """Map experiment-friendly activation names to saved dataset names."""
-    aliases = {
-        "attn_out": "attn_out_act",
-        "mlp_out": "mlp_out_act",
-        # resid_mid names the residual stream after attention and before MLP.
-        "resid_mid": "attn_resid",
-    }
-    return aliases.get(act_module, act_module)
+    return resolve_saved_act_name(act_module)
 
 
 def _normalize_act_modules(act_modules):
@@ -149,7 +203,7 @@ def load_activation_batch(config, h5_path, act_modules=None):
 
     activation_out, layer_ids = load_sample_batch(
         batch_size=config.batch_size,
-        model_names=None,
+        model_names=config.model_names,
         act_modules=requested_modules,
         layers=config.layers,
         h5_path=h5_path,
@@ -178,3 +232,31 @@ def load_activation_batch(config, h5_path, act_modules=None):
         layer_labels=layer_labels,
         sample_ids=sample_ids,
     )
+
+def normalize_layer_label(layer):
+    layer = str(layer)
+
+    if layer.startswith("layer_"):
+        layer = layer.removeprefix("layer_")
+    if layer.isdigit():
+        return str(int(layer))
+
+    return layer
+
+def build_layer_idx_map(layer_labels):
+    return {
+        normalize_layer_label(layer_label) : idx 
+        for idx, layer_label in enumerate(layer_labels)
+    }
+
+def normalize_activation_layer_idx(current_layer, layer_labels):
+    layer_idx_map = build_layer_idx_map(layer_labels)
+    current_layer = normalize_layer_label(current_layer)
+
+    if current_layer not in layer_idx_map:
+        raise KeyError(
+            f"Layer {current_layer} not found in saved activations. "
+            f"Available layers: {list(layer_idx_map.keys())}"
+        )
+
+    return layer_idx_map[current_layer]

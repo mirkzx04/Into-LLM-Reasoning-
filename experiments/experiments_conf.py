@@ -34,12 +34,13 @@ class PatchConfig:
 
     positions: tuple = (0.5, 0.9, 0.95)
     patch_modules: tuple = ("attn_out", "mlp_out", "resid_mid")
-    recipient_model: str = "sftt"
-    donor_model: str = "rlvr"
+    recipient_name: str = "sftt"
+    donor_name: str = "rlvr"
     layers: object = None
     batch_size: int = 10
     max_sample: int = 100
     sample_selection_seed: int = 42
+    model_names = ["rlvr", "sftt"]
 
 
 @dataclass(frozen=True)
