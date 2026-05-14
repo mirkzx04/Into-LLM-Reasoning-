@@ -16,8 +16,8 @@ from experiments.experiments_utils import (
     resolve_token_cache_path,
     metadata_matches,
 )
-
 from experiments.activation_patching.pathcing_utils import patch_view, build_patching_name
+from experiments.activation_patching.patch_plot import plot_requested_patch_metrics
 
 REQUIRED_PATCH_METRICS = {
     "recovery_score",
@@ -233,17 +233,16 @@ def main():
             config=config,
             activation_batch=instance_activation_batch(config, h5_path)
         )
-
-        patch_out = th.load(patch_cache_path, map_location = "cpu")
-        cached_metada = patch_out.get(OUT_METADA_KEY)
+        patch_out = th.load(patch_cache_path, map_location = "cpu") # Load cached patch_out
 
         if validate_patch_out_cache(
             patch_out=patch_out,
             expected_metadata=expected_metada,
         ): 
-            pass
+            plot_requested_patch_metrics(patch_out)
+
         else : 
-                execute_pathing(
+            patch_out = execute_pathing(
                 h5_path=h5_path,
                 config=config,
                 token_index=return_token_index(h5_path),
@@ -251,8 +250,10 @@ def main():
                 module_tag=module_tag,
                 positon_tag=position_tag
             )
+
+            plot_requested_patch_metrics(patch_out)
     else :
-        execute_pathing(
+        patch_out = execute_pathing(
             h5_path=h5_path,
             config=config,
             token_index=return_token_index(h5_path),
@@ -260,6 +261,7 @@ def main():
             module_tag=module_tag,
             positon_tag=position_tag
         )
-        
+        plot_requested_patch_metrics(patch_out)
+
 if __name__ == "__main__":
     main()

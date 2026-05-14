@@ -92,10 +92,7 @@ def target_token_stats_patching(logits, target_token_id):
 
     return target_logprob, target_rank
 
-import torch as th
-
-
-def target_in_topk_hit(logits, target_ids, top_k=10):
+def target_in_topk_hit(logits, target_ids, top_k=20):
     """
     Check whether the target token is inside the model top-k.
 
@@ -136,27 +133,27 @@ def target_in_topk_hit(logits, target_ids, top_k=10):
     return hit
 
 
-def delta_target_in_topk_hit(patched_logits, receiver_logits, target_ids, top_k=10):
-    """
-    Delta Top-K Hit:
-        1[target in top-k(patched)] - 1[target in top-k(receiver)]
+def delta_target_in_topk_hit(patched_hit, receiver_hit):
+    # """
+    # Delta Top-K Hit:
+    #     1[target in top-k(patched)] - 1[target in top-k(receiver)]
 
-    patched_logits: [B, V] or [V]
-    receiver_logits: [B, V] or [V]
-    target_ids: [B] or scalar-compatible
+    # patched_logits: [B, V] or [V]
+    # receiver_logits: [B, V] or [V]
+    # target_ids: [B] or scalar-compatible
 
-    returns:
-        delta_hit: [B] float tensor in {-1.0, 0.0, 1.0}
-    """
-    patched_hit = target_in_topk_hit(
-        logits=patched_logits,
-        target_ids=target_ids,
-        top_k=top_k,
-    )
-    receiver_hit = target_in_topk_hit(
-        logits=receiver_logits,
-        target_ids=target_ids,
-        top_k=top_k,
-    )
+    # returns:
+    #     delta_hit: [B] float tensor in {-1.0, 0.0, 1.0}
+    # """
+    # patched_hit = target_in_topk_hit(
+    #     logits=patched_logits,
+    #     target_ids=target_ids,
+    #     top_k=top_k,
+    # )
+    # receiver_hit = target_in_topk_hit(
+    #     logits=receiver_logits,
+    #     target_ids=target_ids,
+    #     top_k=top_k,
+    # )
 
     return patched_hit - receiver_hit
