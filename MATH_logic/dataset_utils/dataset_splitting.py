@@ -32,20 +32,48 @@ TRAIN_TYPES = ["Intermediate Algebra", "Number Theory", "Prealgebra", "Precalcul
 OOD_LEVELS = ["Level 5"]
 OOD_TYPES = ["Algebra", "Counting & Probability", "Geometry"]
 
-numina_set = load_dataset("AI-MO/NuminaMath-CoT")
+_DATASETS_CACHE = None
+_MATH_LOOKUP_CACHE = None
 
-gsm8k_set = (
-    load_dataset("openai/gsm8k", "main")
-    .rename_columns({"question": "problem", "answer": "solution"})
-)
+def load_dataset_lazily():
+    """
+    Load dataset and build the lookup table
+    """
 
-math_set = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default")
+    global _DATASETS_CACHE, _MATH_LOOKUP_CACHE
 
-dapo_set = load_dataset(
-    "open-r1/DAPO-Math-17k-Processed",
-    "en",
-    split="train",
-)
+    if _DATASETS_CACHE is not None:
+        return
+
+    print("[Lazy Load] Caricamento dei dataset in corso (verrà eseguito una volta sola)...")
+    
+    _DATASETS_CACHE = {}
+    
+    _DATASETS_CACHE["numina"] = load_dataset("AI-MO/NuminaMath-CoT")
+    
+    _DATASETS_CACHE["gsm8k"] = (
+        load_dataset("openai/gsm8k", "main")
+        .rename_columns({"question": "problem", "answer": "solution"})
+    )
+    
+    _DATASETS_CACHE["math"] = load_dataset("DigitalLearningGmbH/MATH-lighteval", "default")
+    
+    _DATASETS_CACHE["dapo"] = load_dataset(
+        "open-r1/DAPO-Math-17k-Processed",
+        "en",
+        split="train",
+    )
+
+    print("[Lazy Load] Costruzione del MATH_LOOKUP...")
+    math_train_rows = _DATASETS_CACHE["math"]["train"]
+    _MATH_LOOKUP_CACHE = {
+        normalize_for_lookup(row["problem"]): {
+            "level": row["level"],
+            "type": row["type"],
+        }
+        for row in math_train_rows
+    }
+    print("[Lazy Load] Caricamento completato.")
 
 def canonical_problem_text(text):
     """
@@ -249,15 +277,15 @@ def sample_dataset(dataset, n_samples=None):
     n_samples = min(int(n_samples), len(dataset))
     return dataset.select(range(n_samples))
 
-math_train_rows = math_set["train"]
+    math_train_rows = math_set["train"]
 
-MATH_LOOKUP = {
-    normalize_for_lookup(row["problem"]): {
-        "level": row["level"],
-        "type": row["type"],
+    MATH_LOOKUP = {
+        normalize_for_lookup(row["problem"]): {
+            "level": row["level"],
+            "type": row["type"],
+        }
+        for row in math_train_rows
     }
-    for row in math_train_rows
-}
 
 
 def filter_math(example, levels, types):
@@ -265,7 +293,8 @@ def filter_math(example, levels, types):
 
 
 def get_math_meta_from_problem(problem):
-    return MATH_LOOKUP.get(normalize_for_lookup(problem))
+    load_dataset_lazily()
+    return _MATH_LOOKUP_CACHE.get(normalize_for_lookup(problem))
 
 def get_dapo_prompt_content(example):
     prompt = example.get("prompt", "")
@@ -505,10 +534,11 @@ def build_train_val_dataset(tokenizer, training):
         GSM8K + filtered MATH + filtered DAPO.
     """
     training = training.lower()
+    load_dataset_lazily()
+    datasets = _DATASETS_CACHE
 
     if training == "sft":
-        numina_train = sample_dataset(numina_set["train"], NUMINA_SAMPLES)
-
+        numina_train = sample_dataset(datasets["numina"]["train"], NUMINA_SAMPLES)
         parts = [
             {
                 "dataset": numina_train,
@@ -524,15 +554,14 @@ def build_train_val_dataset(tokenizer, training):
         )
 
     if training == "rlvr":
-        gsm_train = gsm8k_set["train"]
+        gsm_train = datasets["gsm8k"]["train"]
 
-        math_train = math_set["train"].filter(
+        math_train = datasets["math"]["train"].filter(
             lambda x: filter_math(x, TRAIN_LEVELS, TRAIN_TYPES),
             desc="Filtering MATH train",
         )
 
-        dapo_norm = normalize_dapo_dataset(dapo_set)
-
+        dapo_norm = normalize_dapo_dataset(datasets["dapo"])
         dapo_train = dapo_norm.filter(
             filter_dapo_train,
             desc="Filtering DAPO train using MATH metadata",
@@ -604,19 +633,20 @@ def build_ood_eval_dataset(
         print(f"[OOD load] loading existing dataset from: {save_dir}")
         return load_from_disk(save_dir)
 
+    load_dataset_lazily()
+    datasets = _DATASETS_CACHE
     # ============================================================
     # 1. Build raw RLVR train pool
     # ============================================================
 
-    gsm_train = gsm8k_set["train"]
+    gsm_train = datasets["gsm8k"]["train"]
 
-    math_train = math_set["train"].filter(
+    math_train = datasets["math"]["train"].filter(
         lambda x: filter_math(x, TRAIN_LEVELS, TRAIN_TYPES),
         desc="Filtering MATH train for leakage check",
     )
 
-    dapo_norm = normalize_dapo_dataset(dapo_set)
-
+    dapo_norm = normalize_dapo_dataset(datasets["dapo"])
     dapo_train = dapo_norm.filter(
         filter_dapo_train,
         desc="Filtering DAPO train for leakage check",
@@ -640,9 +670,8 @@ def build_ood_eval_dataset(
     # 2. Build raw OOD candidates
     # ============================================================
 
-    gsm_tst_raw = gsm8k_set["test"]
-
-    math_ood_raw = math_set["train"].filter(
+    gsm_tst_raw = datasets["gsm8k"]["test"]
+    math_ood_raw = datasets["math"]["train"].filter(
         lambda x: filter_math(x, OOD_LEVELS, OOD_TYPES),
         desc="Filtering MATH OOD",
     )

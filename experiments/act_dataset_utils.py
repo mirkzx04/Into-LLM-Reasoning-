@@ -18,9 +18,33 @@ DERIVED_RESIDUAL_COMPONENTS = {
 }
 
 def get_activation_dataset():
-    from analysis.extract_activation import extract_activation
+    from analysis.extract_activation import (
+        extract_activation,
+        get_activation_dataset_paths,
+        load_existing_activation_dataset,
+    )
+
+    max_new_tokens = 2000
+    generator_name = "qwen25_1.5b_rlvr"
+    ood_dataset_name = "ood_eval_dataset"
+
+    dataset_paths = get_activation_dataset_paths(
+        save_path=ACTIVATION_DATASET_PATH,
+        max_new_tokens=max_new_tokens,
+        generator_name=generator_name,
+        ood_dataset_name=ood_dataset_name,
+    )
+
+    if os.path.exists(dataset_paths["h5_path"]):
+        return load_existing_activation_dataset(
+            h5_path=dataset_paths["h5_path"],
+            metadata_path=dataset_paths["metadata_path"],
+        )
+
     from models.model import get_hf_model, get_tokenizer
     from MATH_logic.dataset_utils.dataset_splitting import build_ood_eval_dataset
+
+    
 
     gen_model = get_hf_model(RLVR_PATH)
     gen_tokenizer = get_tokenizer(RLVR_PATH)
@@ -32,14 +56,14 @@ def get_activation_dataset():
     model_desc = [(None, "base"), (SFT_PATH, "sftt"), (RLVR_PATH, "rlvr")]
     
     return extract_activation(
-        max_new_tokens=2000,
+        max_new_tokens=max_new_tokens,
         batch_size=40,
         gen_model=gen_model,
         gen_tokenizer=gen_tokenizer,
         gen_dataset=gen_dataset,
         model_desc=model_desc,
-        generator_name="qwen25_1.5b_rlvr",
-        ood_dataset_name="ood_eval_dataset",
+        generator_name=generator_name,
+        ood_dataset_name=ood_dataset_name,
         save_path=ACTIVATION_DATASET_PATH
     )
 

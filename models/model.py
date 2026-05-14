@@ -36,14 +36,20 @@ def get_hf_model(model_path = None):
 
 def load_tl_model(model_pth, device, n_ctx=None):
     # Build a TransformerLens model for one checkpoint variant.
+    print(f"=== INSTANCE TL MODEL AS {model_pth} ===")
+    hf_model = get_hf_model(model_pth)
+    hf_tokenizer = get_tokenizer(model_pth)
     tl_model = HookedTransformer.from_pretrained_no_processing(
         MODEL_ID,
-        hf_model=get_hf_model(model_pth),
-        tokenizer=get_tokenizer(model_pth),
+        hf_model=hf_model,
+        tokenizer=hf_tokenizer,
         device=device,
         dtype=th.bfloat16,
         n_ctx=n_ctx,
     )
+
+    del hf_model
+    th.cuda.empty_cache()
 
     # Keep the config aligned with the runtime context window.
     tl_model.cfg.n_ctx = n_ctx
