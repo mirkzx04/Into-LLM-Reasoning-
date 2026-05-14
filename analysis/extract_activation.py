@@ -171,12 +171,6 @@ def extract_activation(
     h5_path = dataset_paths["h5_path"]
     metadata_path = dataset_paths["metadata_path"]
 
-    if os.path.exists(h5_path):
-        return load_existing_activation_dataset(
-            h5_path=h5_path,
-            metadata_path=metadata_path,
-        )
-
     # Generate one shared completion set that will be replayed through all models.
     token_cache_prefix = f"{generator_name}_{ood_dataset_name}_max{max_new_tokens}_tok"
     token_cache_dir = os.path.join(save_path, "tokens_cache")
