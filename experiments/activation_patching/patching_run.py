@@ -13,12 +13,11 @@ from experiments.experiments_utils import (
     abs_path_or_none,
     attach_metadata, 
     normalize_metadata_value,
-    #return_token_cache,
     resolve_token_cache_path,
     metadata_matches,
 )
 
-from experiments.activation_patching.pathcing_utils import patch_view
+from experiments.activation_patching.pathcing_utils import patch_view, build_patching_name
 
 REQUIRED_PATCH_METRICS = {
     "recovery_score",
@@ -28,6 +27,77 @@ REQUIRED_PATCH_METRICS = {
     "recivier_hit",
     "sample_ids",
 }
+
+def has_required_patch_structure(patch_out, expected_metadata):
+    """
+    Check if the loaded patch_out structure respect the waiting structure
+    """
+    if not isinstance(patch_out, dict):
+        print("Patch cache is not a dict")
+        return False
+
+    # Check if the pathing name key is correct or it is missed
+    patching_name = build_patching_name(
+        recivient_name=expected_metadata["recivient_name"],
+        donor_name = expected_metadata["donor_name"]
+    )
+    if patching_name not in patch_out:
+        print(f"Patch cache missing patchinbg key : {patching_name}")
+
+    patching_ref = patch_out[patching_name]
+    
+    # Extract expected keys from expected metadata
+    expected_layers = expected_metadata["layer_labels"]
+    expected_act_names = expected_metadata["patch_modules"]
+    expected_positions = expected_metadata["positions"]
+
+    for layer in expected_layers: 
+        if layer not in patching_ref:
+            print(f"Patch cache missing layer : {layer}")
+            return False
+        
+        for act_name in expected_act_names:
+            if act_name not in patching_ref[layer]:
+                print(f"Patch cache missing act_name={act_name} for layer={layer}")
+                return False
+
+            for position in expected_positions:
+                if position not in patching_ref[layer][act_name]:
+                    print(
+                        "Patch cache missing position "
+                        f"layer={layer}, act_name={act_name}, position={position}"
+                    )
+                    return False
+
+                metrics_ref = patching_ref[layer][act_name][position]
+                missing = REQUIRED_PATCH_METRICS.difference(metrics_ref.keys())
+
+                if missing:
+                    print(
+                        "Patch cache missing required metrics "
+                        f"layer={layer}, act_name={act_name}, position={position}, "
+                        f"missing={sorted(missing)}"
+                    )
+                    return False
+
+    return True
+
+def validate_patch_out_cache(patch_out, expected_metadata) :
+    cached_metadata = patch_out.get(OUT_METADA_KEY)
+
+    if not metadata_matches(
+        cached_metadata=cached_metadata,
+        expected_metadata=expected_metadata
+    ): 
+        return False
+    
+    if not has_required_patch_structure(
+        patch_out=patch_out,
+        expected_metadata=expected_metadata,
+    ) : 
+        return False
+    
+    return True
 
 def instance_activation_batch(
     config,
@@ -167,10 +237,13 @@ def main():
         patch_out = th.load(patch_cache_path, map_location = "cpu")
         cached_metada = patch_out.get(OUT_METADA_KEY)
 
-        if metadata_matches(cached_metadata=cached_metada, expected_metadata=expected_metada):
+        if validate_patch_out_cache(
+            patch_out=patch_out,
+            expected_metadata=expected_metada,
+        ): 
             pass
         else : 
-            execute_pathing(
+                execute_pathing(
                 h5_path=h5_path,
                 config=config,
                 token_index=return_token_index(h5_path),
@@ -187,5 +260,6 @@ def main():
             module_tag=module_tag,
             positon_tag=position_tag
         )
+        
 if __name__ == "__main__":
     main()
