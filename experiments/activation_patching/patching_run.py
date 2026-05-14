@@ -4,21 +4,40 @@ import torch as th
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.append(project_root)
 
-from experiments.tok_dataset_utils import (
-    load_token_cache,
-    build_token_index,
-)
-
 from experiments.act_dataset_utils import get_activation_dataset
 from experiments.experiments_conf import PatchConfig
 from experiments.experiments_utils import (
+    OUT_METADA_KEY,
     load_activation_batch, 
-    resolve_token_cache_path,
+    return_token_index,
     abs_path_or_none,
     attach_metadata, 
-    normalize_metadata_value
+    normalize_metadata_value,
+    #return_token_cache,
+    resolve_token_cache_path,
+    metadata_matches,
 )
+
 from experiments.activation_patching.pathcing_utils import patch_view
+
+REQUIRED_PATCH_METRICS = {
+    "recovery_score",
+    "kl_recivier_donor",
+    "kl_patched_donor",
+    "patched_hit",
+    "recivier_hit",
+    "sample_ids",
+}
+
+def instance_activation_batch(
+    config,
+    h5_path
+): 
+    return load_activation_batch(
+        config=config, 
+        h5_path=h5_path,
+        act_modules=config.patch_modules
+    )
 
 def build_metadata(
     h5_path, 
@@ -48,9 +67,12 @@ def build_metadata(
 def save_patch_cache(
     config,
     patch_out,
+    position_tag,
+    module_tag,
 ):
-    position_tag = "_".join(str(p).replace(".", "p") for p in config.positions)
-    module_tag = "_".join(config.patch_modules)
+    """
+    Build the patch cache name and its dir
+    """
 
     patch_cache_name = (
         f"patch_out_"
@@ -71,22 +93,18 @@ def save_patch_cache(
     os.makedirs(os.path.dirname(patch_cache_path), exist_ok=True)
     th.save(patch_out, patch_cache_path)
 
-def main():
-    config = PatchConfig()
-    act_dataset = get_activation_dataset()
-    h5_path = act_dataset["h5_path"]
-
-    activation_batch = load_activation_batch(
-        config=config, 
-        h5_path=h5_path,
-        act_modules=config.patch_modules
-    )
-
-    token_cache_path = resolve_token_cache_path(h5_path)
-    token_cache = load_token_cache(token_cache_path)
-    token_index = build_token_index(token_cache)
-    del token_cache
-
+def execute_pathing(
+    h5_path, 
+    config, 
+    token_index,
+    token_cache_path,
+    activation_batch,
+    module_tag,
+    positon_tag,
+): 
+    """
+    Execute activation pathing for config model and return the patch cache
+    """
     patch_out = patch_view(
         norm_positions=config.positions,
         act_names=config.patch_modules,
@@ -99,6 +117,7 @@ def main():
         activation_out=activation_batch.activation_out
     )    
 
+    # Attach metadata to trace patch cache 
     patch_out = attach_metadata(
         patch_out,
         build_metadata(
@@ -109,8 +128,64 @@ def main():
         )
     )
 
-    save_patch_cache(config=config, patch_out=patch_out)
+    save_patch_cache(
+        config=config, 
+        patch_out=patch_out,
+        position_tag=positon_tag,
+        module_tag=module_tag
+    ) # Save patch cache 
 
+    return patch_out
+
+def main():
+    config = PatchConfig()
+    act_dataset = get_activation_dataset()
+    h5_path = act_dataset["h5_path"]
+
+    position_tag = "_".join(str(p).replace(".", "p") for p in config.positions)
+    module_tag = "_".join(config.patch_modules)
     
+    patch_cache_path = os.path.join(
+        project_root,
+        "experiments",
+        "activation_patching",
+        "patch_cache",
+        f"patch_out_recipient-{config.recipient_name}_"
+        f"donor-{config.donor_name}_"
+        f"modules-{module_tag}_"
+        f"pos-{position_tag}.pt"
+    )
+
+    if os.path.exists(patch_cache_path):
+        expected_metada = build_metadata(
+            h5_path=h5_path,
+            token_cache_path=resolve_token_cache_path(h5_path),
+            config=config,
+            activation_batch=instance_activation_batch(config, h5_path)
+        )
+
+        patch_out = th.load(patch_cache_path, map_location = "cpu")
+        cached_metada = patch_out.get(OUT_METADA_KEY)
+
+        if metadata_matches(cached_metadata=cached_metada, expected_metadata=expected_metada):
+            pass
+        else : 
+            execute_pathing(
+                h5_path=h5_path,
+                config=config,
+                token_index=return_token_index(h5_path),
+                activation_batch=instance_activation_batch(config, h5_path),
+                module_tag=module_tag,
+                positon_tag=position_tag
+            )
+    else :
+        execute_pathing(
+            h5_path=h5_path,
+            config=config,
+            token_index=return_token_index(h5_path),
+            activation_batch=instance_activation_batch(config, h5_path),
+            module_tag=module_tag,
+            positon_tag=position_tag
+        )
 if __name__ == "__main__":
     main()

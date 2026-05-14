@@ -4,9 +4,12 @@ from dataclasses import dataclass
 import torch as th
 
 from experiments.act_dataset_utils import format_layer_group_label, load_sample_batch
+from experiments.tok_dataset_utils import (
+    load_token_cache,
+    build_token_index,
+)
 
-
-LENS_OUT_METADATA_KEY = "__metadata__"
+OUT_METADA_KEY = "__metadata__"
 
 ACT_MODULE_ALIASES = {
     # direct outputs
@@ -104,7 +107,7 @@ def abs_path_or_none(path):
 def attach_metadata(lens_out, metadata):
     """Attach metadata to a lens output dict without mutating the original."""
     lens_out = dict(lens_out)
-    lens_out[LENS_OUT_METADATA_KEY] = metadata
+    lens_out[OUT_METADA_KEY] = metadata
     return lens_out
 
 
@@ -260,3 +263,12 @@ def normalize_activation_layer_idx(current_layer, layer_labels):
         )
 
     return layer_idx_map[current_layer]
+
+def return_token_cache(token_cache_path) :
+    return load_token_cache(token_cache_path)
+
+def return_token_index(h5_path): 
+    token_cache_path = resolve_token_cache_path(h5_path)
+    token_index = build_token_index(return_token_cache(token_cache_path))
+
+    return token_index
