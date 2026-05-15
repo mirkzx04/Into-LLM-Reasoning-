@@ -67,6 +67,9 @@ def build_patch_out(jobs, recivient_name, donor_name):
             "patched_hit": [],
             "recivier_hit": [],
             "sample_ids": [],
+            "activation_delta_norm": [],
+            "activation_relative_delta_norm": [],
+            "activation_cosine_similarity": [],
         }
 
     return patch_out
@@ -77,18 +80,41 @@ def instance_model(recivient_name, device) :
     else :
         return load_tl_model(model_pth=f"{recivient_name}_model_math", device=device, n_ctx=5_000).to(device)
 
-def make_patch_hook(donor_act):
+def make_patch_hook(donor_act, patch_stats):
     donor_act = donor_act.detach()
 
     def patch_hook(receiver_act, hook):
-        patched = receiver_act.clone()
+        """
+        Replace the activation of the receiver model with that of the donor model
+        Calculate metrics to understand how geometrically different the activations of the two models are
 
-        # tokens were truncated, so act_idx is now the last position
-        patched[:, -1, :] = donor_act.to(
-            device=patched.device,
-            dtype=patched.dtype,
+        metrics : 
+            activation_delta_norm -> Measures L2
+            activation_relative_norm -> It measures how large the donor-recipient difference is compared to the recipient state norm.
+            activation_cosine_sim -> Measures the directional alignment between recipient and donor activation.
+        Args : 
+            receiver_act : Activation of the receiver model  | Shape : [B, seq_len, d_model]
+        """
+        patched = receiver_act.clone()
+        receiver_vec = patched[:, -1, :].detach().cpu()
+        donor_vec = donor_act.to(
+            device = patched.device,
+            dtype = patched.dtype,
         )
 
+        delta = donor_vec - receiver_vec.squeeze(0)
+
+        patch_stats["activation_delta_norm"] = delta.norm().detach().cpu()
+        patch_stats["activation_relative_delta_norm"] = (
+            delta.norm() / (receiver_vec.norm() + 1e-12)
+        ).detach().cpu()
+        patch_stats["activation_cosine_sim"] = th.nn.functional.cosine_similarity(
+            receiver_vec.squeeze(0).float(),
+            donor_vec.float(),
+            dim = 0,
+        ).detach().cpu()
+
+        patched[:, -1, :] = donor_vec
         return patched
 
     return patch_hook
@@ -99,6 +125,7 @@ def run_patched_forward(
     hook_name, 
     tokens_for_recivient
 ):
+    patched_stats = {}
     patch_hook = make_patch_hook(donor_act)
 
     with th.no_grad():
@@ -107,7 +134,7 @@ def run_patched_forward(
             fwd_hooks = [(hook_name, patch_hook)]
         ) # Shape [B, seq_len, vocab_size]
 
-    return patched_logits[:, -1, :]
+    return patched_logits[:, -1, :], patched_stats
 
 def run_donor_forward(
     donor_model,
@@ -134,7 +161,8 @@ def append_patch_out(
     recivier_hit,
     recovery_score,
     sid,
-    patch_metrics
+    patch_metrics,
+    patch_stats
 ):
     
     patch_metrics["recovery_score"].append(recovery_score.squeeze().detach().cpu())
@@ -142,6 +170,16 @@ def append_patch_out(
     patch_metrics["kl_patched_donor"].append(kl_patched_donor.squeeze().detach().cpu())
     patch_metrics["patched_hit"].append(patched_hit.squeeze().detach().cpu())
     patch_metrics["recivier_hit"].append(recivier_hit.squeeze().detach().cpu())
+    
+    patch_metrics["activation_delta_norm"].append(
+        patch_stats["activation_delta_norm"].detach().cpu()
+    )
+    patch_metrics["activation_relative_delta_norm"].append(
+        patch_stats["activation_relative_delta_norm"].detach().cpu()
+    )
+    patch_metrics["activation_cosine_similarity"].append(
+        patch_stats["activation_cosine_similarity"].detach().cpu()
+    )
 
     patch_metrics["sample_ids"].append(int(sid))
 
@@ -257,7 +295,7 @@ def patch_view(
                 token_target_id = full_tokens[target_idx]
 
                 # Compute logits for donor model and recivient model
-                patched_logits = run_patched_forward(
+                patched_logits, patch_stats = run_patched_forward(
                     recivient_model=recivient_model.eval(),
                     hook_name=hook_name,
                     tokens_for_recivient=tokens_for_recivient,
@@ -319,7 +357,8 @@ def patch_view(
                     recivier_hit=recivier_hit,
                     recovery_score=recovery_score,
                     sid=sid,
-                    patch_metrics=patch_metrics
+                    patch_metrics=patch_metrics,
+                    patch_stats=patch_stats
                 )
                 pbar.update(1)
 

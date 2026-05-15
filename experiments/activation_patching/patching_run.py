@@ -26,6 +26,9 @@ REQUIRED_PATCH_METRICS = {
     "patched_hit",
     "recivier_hit",
     "sample_ids",
+    "activation_delta_norm",
+    "activation_relative_delta_norm",
+    "activation_cosine_similarity",
 }
 
 def has_required_patch_structure(patch_out, expected_metadata):
@@ -123,7 +126,7 @@ def build_metadata(
         "token_cache_path": abs_path_or_none(token_cache_path),
         "positions": normalize_metadata_value(config.positions),
         "patch_modules": normalize_metadata_value(config.patch_modules),
-        "recipient_name": config.recipient_name,
+        "recivient_name": config.recivient_name,
         "donor_name": config.donor_name,
         "layers": normalize_metadata_value(config.layers),
         "batch_size": config.batch_size,
@@ -146,7 +149,7 @@ def save_patch_cache(
 
     patch_cache_name = (
         f"patch_out_"
-        f"recipient-{config.recipient_name}_"
+        f"recivient-{config.recivient_name}_"
         f"donor-{config.donor_name}_"
         f"modules-{module_tag}_"
         f"pos-{position_tag}.pt"
@@ -178,7 +181,7 @@ def execute_pathing(
     patch_out = patch_view(
         norm_positions=config.positions,
         act_names=config.patch_modules,
-        recivient_name=config.recipient_name,
+        recivient_name=config.recivient_name,
         donor_name=config.donor_name,
         token_index=token_index,
         sample_ids = activation_batch.sample_ids,
@@ -220,7 +223,7 @@ def main():
         "experiments",
         "activation_patching",
         "patch_cache",
-        f"patch_out_recipient-{config.recipient_name}_"
+        f"patch_out_recivient-{config.recivient_name}_"
         f"donor-{config.donor_name}_"
         f"modules-{module_tag}_"
         f"pos-{position_tag}.pt"
@@ -248,18 +251,20 @@ def main():
                 token_index=return_token_index(h5_path),
                 activation_batch=instance_activation_batch(config, h5_path),
                 module_tag=module_tag,
-                positon_tag=position_tag
+                positon_tag=position_tag, 
+                token_cache_path=resolve_token_cache_path(h5_path)
             )
 
             plot_requested_patch_metrics(patch_out)
-    else :
+    else :  
         patch_out = execute_pathing(
             h5_path=h5_path,
             config=config,
             token_index=return_token_index(h5_path),
             activation_batch=instance_activation_batch(config, h5_path),
             module_tag=module_tag,
-            positon_tag=position_tag
+            positon_tag=position_tag,
+            token_cache_path=resolve_token_cache_path(h5_path)
         )
         plot_requested_patch_metrics(patch_out)
 

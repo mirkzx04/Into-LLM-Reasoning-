@@ -37,6 +37,9 @@ PATCH_METRICS = (
     "recovery_score",
     "delta_target_in_topk_hit",
     "delta_kl_divergence",
+    "activation_delta_norm",
+    "activation_relative_delta_norm",
+    "activation_cosine_similarity",
 )
 
 PATCH_COMPONENT_DIRS = {
@@ -188,6 +191,13 @@ def as_sample_tensor(values):
 
 
 def extract_patch_metric(metrics_ref, metric_name):
+    if metric_name in {
+        "activation_delta_norm",
+        "activation_relative_delta_norm",
+        "activation_cosine_similarity",
+    }:
+        return as_sample_tensor(metrics_ref[metric_name])
+
     if metric_name == "recovery_score":
         return as_sample_tensor(metrics_ref["recovery_score"])
 
@@ -261,6 +271,8 @@ def collect_patch_metric_series(
             )
         except KeyError:
             continue
+
+        metric_tensor = metric_tensor.to(dtype=th.float32)
 
         center, q1, q3 = aggregate_over_samples(
             metric_tensor=metric_tensor,
