@@ -14,7 +14,7 @@ from experiments.act_dataset_utils import (
 )
 from experiments.experiments_conf import LensConfig
 from experiments.experiments_utils import (
-    LENS_OUT_METADATA_KEY,
+    OUT_METADATA_KEY,
     abs_path_or_none,
     attach_metadata,
     load_activation_batch,
@@ -122,7 +122,7 @@ def has_required_metrics(lens_out):
 
 
 def validate_lens_out_cache(lens_out, expected_metadata):
-    cached_metadata = lens_out.get(LENS_OUT_METADATA_KEY)
+    cached_metadata = lens_out.get(OUT_METADATA_KEY)
 
     if not metadata_matches(cached_metadata, expected_metadata):
         return False
@@ -208,7 +208,7 @@ def get_or_compute_lens_out(config):
     )
 
     if cached_lens_out is not None:
-        metadata = cached_lens_out.get(LENS_OUT_METADATA_KEY, {})
+        metadata = cached_lens_out.get(OUT_METADATA_KEY, {})
         return (
             cached_lens_out,
             output_path,

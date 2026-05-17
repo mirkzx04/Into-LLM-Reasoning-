@@ -33,28 +33,27 @@ def build_jobs(
 
     return jobs
 
-def slice_tokens(
-    tokens,
-    position,
-    direction,
-    prompt_len,
-    completion_len,
-):
-    _, _, target_idx = resolve_predictive_completion_indices(
-        position=position,
-        prompt_len=prompt_len,
-        completion_len=completion_len,
-        direction=direction,
-    )
-    return tokens[target_idx]
-
-
 def resolve_predictive_completion_indices(
     position,
     prompt_len,
     completion_len,
     direction=1,
 ):
+    if isinstance(position, str):
+        if position != "last_input_token" :
+            raise ValueError(f"Unknmow lens view : {position}")
+
+        if completion_len < 1 : 
+            raise ValueError( "completion_len must be >= 1 to use last_input_token with an in-range first completion target")
+
+        act_idx = prompt_len - 1
+        if direction == -1:
+            target_idx = act_idx - 1
+        else : 
+            target_idx = prompt_len
+        
+        return None, act_idx, target_idx
+
     if completion_len < 2:
         raise ValueError("completion_len must be >= 2 to select a completion token with an in-range next token")
 
@@ -217,6 +216,13 @@ def apply_lens(active_lens, act):
 
     return logits.to(dtype=th.float32)
 
+def format_view(position):
+    if position is None:
+        return "Fallback"
+    if isinstance(position, str):
+        return position
+    return f"{float(position)}:.2f"
+
 def lens_view(
     views,
     act_names,
@@ -248,16 +254,12 @@ def lens_view(
             act_name = j["act_name"]
             lens_mode = j["lens_mode"]
 
-            if not isinstance(position, float):
-                raise TypeError("position must be a float")
+            if position is not None and not isinstance(position, (float, int, str)):
+                raise TypeError("position must be None, float, int or str")
             if not isinstance(act_name, str):
                 raise TypeError("act_name must be a string")
             if not isinstance(lens_mode, str):
                 raise TypeError("lens_mode must be a string")
-
-            pbar.set_description(
-                f"Logit Lens | {act_name} | {lens_mode} | pos={position:.2f}"
-            )
 
             for sid in sample_ids:
                 sid_logits = {}
@@ -289,7 +291,7 @@ def lens_view(
                         # select one completion token state t and evaluate the
                         # prediction of token t + 1. The last completion token is
                         # excluded because full_tokens has no in-range successor.
-                        _, act_idx, _ = resolve_predictive_completion_indices(
+                        _, act_idx, target_idx = resolve_predictive_completion_indices(
                             position=position,
                             prompt_len=prompt_len,
                             completion_len=completion_len,
@@ -299,29 +301,26 @@ def lens_view(
                         logits = apply_lens(active_lens=active_lens, act=act)  # [L, V]
                         logits_for_target = logits[:, None, :]
 
-                        # target_token_stats expects target_ids with shape [T].
-                        target_id = slice_tokens(
-                            tokens=full_tokens,
-                            position=position,
-                            direction=1,
-                            prompt_len=prompt_len,
-                            completion_len=completion_len,
+                        # target_token_stats expects target_token_id with shape [T].
+                        target_token_id = th.tensor(
+                            [int(full_tokens[target_idx])],
+                            dtype=th.long,
+                            device=device,
                         )
-                        target_ids = th.tensor([target_id], dtype=th.long, device=device)
                     else:
                         # Fallback view: use a fixed late-sequence activation.
                         act = act[:, seq_len - 10, :]  # [L, D]
                         logits = apply_lens(active_lens=active_lens, act=act)  # [L, V]
 
-                        target_ids = None
+                        target_token_id = None
                         logits_for_target = None
 
                     # Single-model metrics from logits [L, V].
                     top_ids = topk_token_ids(logits=logits, top_k=20)
-                    if target_ids is not None :
+                    if target_token_id is not None :
                         target_logprob, target_rank = target_token_stats(
                             logits=logits_for_target,
-                            target_ids=target_ids,
+                            target_ids=target_token_id,
                         )
                     else : 
                         n_layers = logits.shape[0]

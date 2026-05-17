@@ -64,6 +64,8 @@ MODEL_COLORS = {
     "rlvr_vs_sftt": "#ff8a00",
 }
 
+LAST_INPUT_POSITION = "last_input_token"
+
 
 def color_for_series(series_name):
     series_name = str(series_name)
@@ -86,9 +88,54 @@ def is_metadata_key(key):
     return key == METADATA_KEY or str(key).startswith("__")
 
 
+def position_sort_key(value):
+    if value is None:
+        return (2, -math.inf)
+
+    if isinstance(value, str):
+        if value == LAST_INPUT_POSITION:
+            return (0, 0.0)
+        return (3, str(value))
+
+    return (1, float(value))
+
+
 def infer_positions(lens_out):
     positions = [key for key in lens_out.keys() if not is_metadata_key(key)]
-    return sorted(positions, key=lambda value: float(value) if value is not None else -math.inf)
+    return sorted(positions, key=position_sort_key)
+
+
+def is_last_input_position(position):
+    return position == LAST_INPUT_POSITION
+
+
+def split_plot_positions(positions):
+    positions = list(positions)
+    completion_positions = [
+        position for position in positions if not is_last_input_position(position)
+    ]
+    last_input_positions = [
+        position for position in positions if is_last_input_position(position)
+    ]
+
+    groups = []
+    if completion_positions:
+        groups.append((None, completion_positions))
+    if last_input_positions:
+        groups.append((LAST_INPUT_POSITION, last_input_positions))
+
+    return groups
+
+
+def inject_position_group_dir(output_path, position_group):
+    if position_group is None:
+        return output_path
+
+    return os.path.join(
+        os.path.dirname(output_path),
+        sanitize_path_part(position_group),
+        os.path.basename(output_path),
+    )
 
 
 def infer_act_names(lens_out, positions=None):
@@ -363,6 +410,8 @@ def metric_display_name(metric_name):
 def format_position(position):
     if position is None:
         return "fallback"
+    if isinstance(position, str):
+        return position
     return f"{float(position):.2f}"
 
 
@@ -847,31 +896,33 @@ def plot_component_delta_tables(
 
     for lens_mode in lens_modes:
         for model_name in model_names:
-            sections = build_component_delta_table_rows(
-                lens_out=lens_out,
-                lens_mode=lens_mode,
-                model_name=model_name,
-                positions=positions,
-                layer_labels=layer_labels,
-                sample_reducer=sample_reducer,
-            )
-            if not sections:
-                continue
+            for position_group, group_positions in split_plot_positions(positions):
+                sections = build_component_delta_table_rows(
+                    lens_out=lens_out,
+                    lens_mode=lens_mode,
+                    model_name=model_name,
+                    positions=group_positions,
+                    layer_labels=layer_labels,
+                    sample_reducer=sample_reducer,
+                )
+                if not sections:
+                    continue
 
-            output_path = build_component_delta_table_output_path(
-                output_root=output_root,
-                lens_mode=lens_mode,
-                model_name=model_name,
-                module_name=module_name,
-            )
-            saved_path = plot_component_delta_table(
-                sections=sections,
-                model_name=model_name,
-                lens_mode=lens_mode,
-                output_path=output_path,
-            )
-            if saved_path:
-                saved_paths.append(saved_path)
+                output_path = build_component_delta_table_output_path(
+                    output_root=output_root,
+                    lens_mode=lens_mode,
+                    model_name=model_name,
+                    module_name=module_name,
+                )
+                output_path = inject_position_group_dir(output_path, position_group)
+                saved_path = plot_component_delta_table(
+                    sections=sections,
+                    model_name=model_name,
+                    lens_mode=lens_mode,
+                    output_path=output_path,
+                )
+                if saved_path:
+                    saved_paths.append(saved_path)
 
     return saved_paths
 
@@ -904,40 +955,42 @@ def plot_alignment_metric_panels(
                 if metric_name in DISABLED_REPORT_METRICS:
                     continue
 
-                series_by_position = collect_direct_metric_series(
-                    lens_out=lens_out,
-                    metric_name=metric_name,
-                    act_name=act_name,
-                    lens_mode=lens_mode,
-                    positions=positions,
-                    series_names=model_names,
-                    sample_reducer=sample_reducer,
-                )
+                for position_group, group_positions in split_plot_positions(positions):
+                    series_by_position = collect_direct_metric_series(
+                        lens_out=lens_out,
+                        metric_name=metric_name,
+                        act_name=act_name,
+                        lens_mode=lens_mode,
+                        positions=group_positions,
+                        series_names=model_names,
+                        sample_reducer=sample_reducer,
+                    )
 
-                if not series_by_position:
-                    continue
+                    if not series_by_position:
+                        continue
 
-                output_path = output_path_builder(
-                    output_root=output_root,
-                    act_name=act_name,
-                    module_name=act_name,
-                    lens_mode=lens_mode,
-                    metric_name=metric_name,
-                    lens_source_name=lens_source_name,
-                )
-                title = (
-                    f"{title_prefix} | {metric_display_name(metric_name)} | "
-                    f"{act_name} | {lens_mode}"
-                )
-                saved_path = plot_metric_panels(
-                    series_by_position=series_by_position,
-                    metric_name=metric_name,
-                    output_path=output_path,
-                    title=title,
-                    layer_labels=layer_labels,
-                )
-                if saved_path:
-                    saved_paths.append(saved_path)
+                    output_path = output_path_builder(
+                        output_root=output_root,
+                        act_name=act_name,
+                        module_name=act_name,
+                        lens_mode=lens_mode,
+                        metric_name=metric_name,
+                        lens_source_name=lens_source_name,
+                    )
+                    output_path = inject_position_group_dir(output_path, position_group)
+                    title = (
+                        f"{title_prefix} | {metric_display_name(metric_name)} | "
+                        f"{act_name} | {lens_mode}"
+                    )
+                    saved_path = plot_metric_panels(
+                        series_by_position=series_by_position,
+                        metric_name=metric_name,
+                        output_path=output_path,
+                        title=title,
+                        layer_labels=layer_labels,
+                    )
+                    if saved_path:
+                        saved_paths.append(saved_path)
 
     return saved_paths
 
@@ -962,34 +1015,36 @@ def plot_pairwise_metrics(
     for act_name in act_names:
         for lens_mode in lens_modes:
             for metric_name in PAIRWISE_METRICS:
-                series_by_position = collect_direct_metric_series(
-                    lens_out=lens_out,
-                    metric_name=metric_name,
-                    act_name=act_name,
-                    lens_mode=lens_mode,
-                    positions=positions,
-                    series_names=comparison_names,
-                    sample_reducer=sample_reducer,
-                )
+                for position_group, group_positions in split_plot_positions(positions):
+                    series_by_position = collect_direct_metric_series(
+                        lens_out=lens_out,
+                        metric_name=metric_name,
+                        act_name=act_name,
+                        lens_mode=lens_mode,
+                        positions=group_positions,
+                        series_names=comparison_names,
+                        sample_reducer=sample_reducer,
+                    )
 
-                if not series_by_position:
-                    continue
+                    if not series_by_position:
+                        continue
 
-                output_path = build_pairwise_metric_plot_output_path(
-                    output_root=output_root,
-                    module_name=act_name,
-                    lens_mode=lens_mode,
-                    metric_name=metric_name,
-                )
-                saved_path = plot_metric_panels(
-                    series_by_position=series_by_position,
-                    metric_name=metric_name,
-                    output_path=output_path,
-                    title=f"Pairwise Model Comparison | {metric_display_name(metric_name)} | {act_name} | {lens_mode}",
-                    layer_labels=layer_labels,
-                )
-                if saved_path:
-                    saved_paths.append(saved_path)
+                    output_path = build_pairwise_metric_plot_output_path(
+                        output_root=output_root,
+                        module_name=act_name,
+                        lens_mode=lens_mode,
+                        metric_name=metric_name,
+                    )
+                    output_path = inject_position_group_dir(output_path, position_group)
+                    saved_path = plot_metric_panels(
+                        series_by_position=series_by_position,
+                        metric_name=metric_name,
+                        output_path=output_path,
+                        title=f"Pairwise Model Comparison | {metric_display_name(metric_name)} | {act_name} | {lens_mode}",
+                        layer_labels=layer_labels,
+                    )
+                    if saved_path:
+                        saved_paths.append(saved_path)
 
     return saved_paths
 
@@ -1015,35 +1070,37 @@ def plot_pairwise_dkl_delta(
     saved_paths = []
 
     for lens_mode in lens_modes:
-        series_by_position = collect_pairwise_dkl_delta_series(
-            lens_out=lens_out,
-            lens_mode=lens_mode,
-            positions=positions,
-            comparison_names=comparison_names,
-            sample_reducer=sample_reducer,
-        )
+        for position_group, group_positions in split_plot_positions(positions):
+            series_by_position = collect_pairwise_dkl_delta_series(
+                lens_out=lens_out,
+                lens_mode=lens_mode,
+                positions=group_positions,
+                comparison_names=comparison_names,
+                sample_reducer=sample_reducer,
+            )
 
-        if not series_by_position:
-            continue
+            if not series_by_position:
+                continue
 
-        output_path = build_pairwise_dkl_delta_plot_output_path(
-            output_root=output_root,
-            module_name=module_name,
-            lens_mode=lens_mode,
-            metric_name=PAIRWISE_DKL_DELTA_METRIC,
-        )
-        saved_path = plot_metric_panels(
-            series_by_position=series_by_position,
-            metric_name=PAIRWISE_DKL_DELTA_METRIC,
-            output_path=output_path,
-            title=(
-                "Pairwise DKL Delta | "
-                f"{metric_display_name(PAIRWISE_DKL_DELTA_METRIC)} | {lens_mode}"
-            ),
-            layer_labels=layer_labels,
-        )
-        if saved_path:
-            saved_paths.append(saved_path)
+            output_path = build_pairwise_dkl_delta_plot_output_path(
+                output_root=output_root,
+                module_name=module_name,
+                lens_mode=lens_mode,
+                metric_name=PAIRWISE_DKL_DELTA_METRIC,
+            )
+            output_path = inject_position_group_dir(output_path, position_group)
+            saved_path = plot_metric_panels(
+                series_by_position=series_by_position,
+                metric_name=PAIRWISE_DKL_DELTA_METRIC,
+                output_path=output_path,
+                title=(
+                    "Pairwise DKL Delta | "
+                    f"{metric_display_name(PAIRWISE_DKL_DELTA_METRIC)} | {lens_mode}"
+                ),
+                layer_labels=layer_labels,
+            )
+            if saved_path:
+                saved_paths.append(saved_path)
 
     return saved_paths
 
@@ -1069,35 +1126,37 @@ def plot_pairwise_jaccard_delta(
     saved_paths = []
 
     for lens_mode in lens_modes:
-        series_by_position = collect_pairwise_jaccard_delta_series(
-            lens_out=lens_out,
-            lens_mode=lens_mode,
-            positions=positions,
-            comparison_names=comparison_names,
-            sample_reducer=sample_reducer,
-        )
+        for position_group, group_positions in split_plot_positions(positions):
+            series_by_position = collect_pairwise_jaccard_delta_series(
+                lens_out=lens_out,
+                lens_mode=lens_mode,
+                positions=group_positions,
+                comparison_names=comparison_names,
+                sample_reducer=sample_reducer,
+            )
 
-        if not series_by_position:
-            continue
+            if not series_by_position:
+                continue
 
-        output_path = build_pairwise_jaccard_delta_plot_output_path(
-            output_root=output_root,
-            module_name=module_name,
-            lens_mode=lens_mode,
-            metric_name=PAIRWISE_JACCARD_DELTA_METRIC,
-        )
-        saved_path = plot_metric_panels(
-            series_by_position=series_by_position,
-            metric_name=PAIRWISE_JACCARD_DELTA_METRIC,
-            output_path=output_path,
-            title=(
-                "Pairwise Jaccard Delta | "
-                f"{metric_display_name(PAIRWISE_JACCARD_DELTA_METRIC)} | {lens_mode}"
-            ),
-            layer_labels=layer_labels,
-        )
-        if saved_path:
-            saved_paths.append(saved_path)
+            output_path = build_pairwise_jaccard_delta_plot_output_path(
+                output_root=output_root,
+                module_name=module_name,
+                lens_mode=lens_mode,
+                metric_name=PAIRWISE_JACCARD_DELTA_METRIC,
+            )
+            output_path = inject_position_group_dir(output_path, position_group)
+            saved_path = plot_metric_panels(
+                series_by_position=series_by_position,
+                metric_name=PAIRWISE_JACCARD_DELTA_METRIC,
+                output_path=output_path,
+                title=(
+                    "Pairwise Jaccard Delta | "
+                    f"{metric_display_name(PAIRWISE_JACCARD_DELTA_METRIC)} | {lens_mode}"
+                ),
+                layer_labels=layer_labels,
+            )
+            if saved_path:
+                saved_paths.append(saved_path)
 
     return saved_paths
 
@@ -1120,65 +1179,71 @@ def plot_component_metrics(
 
     for lens_mode in lens_modes:
         for metric_name in COMPONENT_METRICS:
-            series_by_position = collect_component_metric_series(
-                lens_out=lens_out,
-                metric_name=metric_name,
-                lens_mode=lens_mode,
-                positions=positions,
-                model_names=model_names,
-                sample_reducer=sample_reducer,
-            )
+            for position_group, group_positions in split_plot_positions(positions):
+                series_by_position = collect_component_metric_series(
+                    lens_out=lens_out,
+                    metric_name=metric_name,
+                    lens_mode=lens_mode,
+                    positions=group_positions,
+                    model_names=model_names,
+                    sample_reducer=sample_reducer,
+                )
 
-            if not series_by_position:
-                continue
+                if not series_by_position:
+                    continue
 
-            output_path = build_component_metric_plot_output_path(
-                output_root=output_root,
-                module_name=module_name,
-                lens_mode=lens_mode,
-                metric_name=metric_name,
-            )
-            saved_path = plot_metric_panels(
-                series_by_position=series_by_position,
-                metric_name=metric_name,
-                output_path=output_path,
-                title=f"Component LogProb Dynamics | {metric_display_name(metric_name)} | {lens_mode}",
-                layer_labels=layer_labels,
-            )
-            if saved_path:
-                saved_paths.append(saved_path)
+                output_path = build_component_metric_plot_output_path(
+                    output_root=output_root,
+                    module_name=module_name,
+                    lens_mode=lens_mode,
+                    metric_name=metric_name,
+                )
+                output_path = inject_position_group_dir(output_path, position_group)
+                saved_path = plot_metric_panels(
+                    series_by_position=series_by_position,
+                    metric_name=metric_name,
+                    output_path=output_path,
+                    title=f"Component LogProb Dynamics | {metric_display_name(metric_name)} | {lens_mode}",
+                    layer_labels=layer_labels,
+                )
+                if saved_path:
+                    saved_paths.append(saved_path)
 
-            n_layers = infer_series_n_layers(series_by_position)
-            keep_indices, zoom_layer_labels = resolve_without_layer0_selection(
-                n_layers=n_layers,
-                layer_labels=layer_labels,
-            )
-            if keep_indices is None:
-                continue
+                n_layers = infer_series_n_layers(series_by_position)
+                keep_indices, zoom_layer_labels = resolve_without_layer0_selection(
+                    n_layers=n_layers,
+                    layer_labels=layer_labels,
+                )
+                if keep_indices is None:
+                    continue
 
-            zoom_series_by_position = subset_series_layers(
-                series_by_position=series_by_position,
-                keep_indices=keep_indices,
-            )
-            zoom_output_path = build_component_metric_plot_output_path(
-                output_root=output_root,
-                module_name=module_name,
-                lens_mode=lens_mode,
-                metric_name=metric_name,
-                suffix="without_layer0",
-            )
-            zoom_saved_path = plot_metric_panels(
-                series_by_position=zoom_series_by_position,
-                metric_name=metric_name,
-                output_path=zoom_output_path,
-                title=(
-                    "Component LogProb Dynamics | "
-                    f"{metric_display_name(metric_name)} | {lens_mode} | without layer 0"
-                ),
-                layer_labels=zoom_layer_labels,
-            )
-            if zoom_saved_path:
-                saved_paths.append(zoom_saved_path)
+                zoom_series_by_position = subset_series_layers(
+                    series_by_position=series_by_position,
+                    keep_indices=keep_indices,
+                )
+                zoom_output_path = build_component_metric_plot_output_path(
+                    output_root=output_root,
+                    module_name=module_name,
+                    lens_mode=lens_mode,
+                    metric_name=metric_name,
+                    suffix="without_layer0",
+                )
+                zoom_output_path = inject_position_group_dir(
+                    zoom_output_path,
+                    position_group,
+                )
+                zoom_saved_path = plot_metric_panels(
+                    series_by_position=zoom_series_by_position,
+                    metric_name=metric_name,
+                    output_path=zoom_output_path,
+                    title=(
+                        "Component LogProb Dynamics | "
+                        f"{metric_display_name(metric_name)} | {lens_mode} | without layer 0"
+                    ),
+                    layer_labels=zoom_layer_labels,
+                )
+                if zoom_saved_path:
+                    saved_paths.append(zoom_saved_path)
 
     return saved_paths
 

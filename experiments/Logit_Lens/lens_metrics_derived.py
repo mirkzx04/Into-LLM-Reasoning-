@@ -3,6 +3,14 @@ import torch as th
 RESIDUAL_ACT_NAMES = ("resid_pre", "attn_resid", "mlp_resid")
 
 
+def format_position_value(position):
+    if position is None:
+        return "fallback"
+    if isinstance(position, str):
+        return position
+    return f"{float(position):.2f}"
+
+
 def get_target_logprob(lens_out, position, act_name, lens_mode, model_name):
     return lens_out[position][act_name][lens_mode][model_name]["target_logprob"]
 
@@ -199,7 +207,7 @@ def format_target_logprob_residual_table(
         lines.append(
             "\t".join(
                 (
-                    f"{float(row['position']):.2f}",
+                    format_position_value(row["position"]),
                     str(row["lens_mode"]),
                     str(row["model"]),
                     str(row["layer"]),
