@@ -7,7 +7,7 @@ sys.path.append(project_root)
 from experiments.act_dataset_utils import get_activation_dataset
 from experiments.experiments_conf import PatchConfig
 from experiments.experiments_utils import (
-    OUT_METADA_KEY,
+    OUT_METADATA_KEY,
     load_activation_batch, 
     return_token_index,
     abs_path_or_none,
@@ -21,10 +21,8 @@ from experiments.activation_patching.patch_plot import plot_requested_patch_metr
 
 REQUIRED_PATCH_METRICS = {
     "recovery_score",
-    "kl_recivier_donor",
-    "kl_patched_donor",
-    "patched_hit",
-    "recivier_hit",
+    "delta_logit_diff",
+    "logit_diff_recovery",
     "sample_ids",
     "activation_delta_norm",
     "activation_relative_delta_norm",
@@ -86,7 +84,7 @@ def has_required_patch_structure(patch_out, expected_metadata):
     return True
 
 def validate_patch_out_cache(patch_out, expected_metadata) :
-    cached_metadata = patch_out.get(OUT_METADA_KEY)
+    cached_metadata = patch_out.get(OUT_METADATA_KEY)
 
     if not metadata_matches(
         cached_metadata=cached_metadata,
@@ -230,6 +228,7 @@ def main():
     )
 
     if os.path.exists(patch_cache_path):
+        print("Validating patch cache metadata")
         expected_metada = build_metadata(
             h5_path=h5_path,
             token_cache_path=resolve_token_cache_path(h5_path),
@@ -242,9 +241,11 @@ def main():
             patch_out=patch_out,
             expected_metadata=expected_metada,
         ): 
+            print("Plotting metrics in patch cache")
             plot_requested_patch_metrics(patch_out)
 
         else : 
+            print("non-compliant metadata")
             patch_out = execute_pathing(
                 h5_path=h5_path,
                 config=config,
@@ -257,6 +258,7 @@ def main():
 
             plot_requested_patch_metrics(patch_out)
     else :  
+        print(f"=== Don't found a patch cache in {patch_cache_path}")
         patch_out = execute_pathing(
             h5_path=h5_path,
             config=config,

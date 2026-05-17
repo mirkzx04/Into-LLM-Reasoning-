@@ -1,43 +1,56 @@
 import torch as th
 
-def compute_recovery_score(
-    patched_score,
-    recivier_score,
-    donor_score,
-):
-    """
-    calculates recovery to understand when the specific activation of the donor 
-    model, inserted into the receiver model, causally shifts the receiver model 
-    towards the behavior of the donor model
+EPS = 1e-12
 
-    0 = The patch changes nothing
-    1 = The patch completely restores the donor's behavior
-    >1 = Overshoot
-    <0 = The patch pushes in the opposite direction
 
-    Args : 
-        patched_score : Patched log_softmax score | Shape : []
-        recivier_score : Recivier log_softmax score | Shape : []
-        donor_score : Donor log_softmax score | Shape : []
-    """
+def _ensure_2d_logits(logits):
+    original_was_1d = logits.ndim == 1
 
-    num = patched_score - recivier_score
-    denom = (donor_score - recivier_score) + 1e-12
-    return num / denom
+    if original_was_1d:
+        logits = logits.unsqueeze(0)
 
-def delta_kl_divergence(
-    kl_recivier_donor,
-    kl_patched_donor,
-) : 
-    """
-    Measures how much the patch shifts the complete distribution of the 
-    recivier towards that of the donor
+    if logits.ndim != 2:
+        raise ValueError(
+            f"logits must have shape [V] or [B, V], got {tuple(logits.shape)}"
+        )
 
-    Args : 
-        kl_recivier_donor : KL(recivier_score, donor_score) | Shape : 
-        kl_patched_donor : KL(patched_score, donor_score) | Shape : 
-    """
-    return (kl_recivier_donor - kl_patched_donor)
+    return logits, original_was_1d
+
+
+def _ensure_1d_token_ids(token_ids, device, batch_size):
+    if not th.is_tensor(token_ids):
+        token_ids = th.tensor(token_ids, device=device)
+
+    token_ids = token_ids.to(device)
+
+    if token_ids.ndim == 0:
+        token_ids = token_ids.unsqueeze(0)
+
+    if token_ids.ndim != 1:
+        raise ValueError(
+            f"token_ids must be scalar or [B], got {tuple(token_ids.shape)}"
+        )
+
+    if token_ids.shape[0] != batch_size:
+        raise ValueError(
+            f"token_ids batch must match logits batch: "
+            f"{token_ids.shape[0]} vs {batch_size}"
+        )
+
+    return token_ids
+
+
+def gather_token_scores(logits, token_ids):
+    logits, original_was_1d = _ensure_2d_logits(logits)
+    token_ids = _ensure_1d_token_ids(token_ids, logits.device, logits.shape[0])
+
+    values = logits.gather(-1, token_ids[:, None]).squeeze(-1)
+
+    if original_was_1d:
+        values = values.squeeze(0)
+
+    return values
+
 
 def target_token_stats_patching(logits, target_token_id):
     """
@@ -50,41 +63,18 @@ def target_token_stats_patching(logits, target_token_id):
         target_logprob: scalar or [B]
         target_rank: scalar or [B]
     """
-
-    original_was_1d = logits.ndim == 1
-
-    if logits.ndim == 1:
-        logits = logits[None, :]      # [1, V]
-
-    if logits.ndim != 2:
-        raise ValueError(f"logits must have shape [V] or [B, V], got {tuple(logits.shape)}")
-
-    if not th.is_tensor(target_token_id):
-        target_token_id = th.tensor(target_token_id, device=logits.device)
-
-    target_token_id = target_token_id.to(logits.device)
-
-    if target_token_id.ndim == 0:
-        target_token_id = target_token_id[None]  # [1]
-
-    if target_token_id.ndim != 1:
-        raise ValueError(
-            f"target_token_id must be scalar or [B], got {tuple(target_token_id.shape)}"
-        )
-
-    if target_token_id.shape[0] != logits.shape[0]:
-        raise ValueError(
-            f"target_token_id batch must match logits batch: "
-            f"{target_token_id.shape[0]} vs {logits.shape[0]}"
-        )
-
-    target_ids_exp = target_token_id[:, None]  # [B, 1]
+    logits, original_was_1d = _ensure_2d_logits(logits)
+    target_token_id = _ensure_1d_token_ids(
+        target_token_id,
+        logits.device,
+        logits.shape[0],
+    )
 
     log_probs = logits.log_softmax(dim=-1)
-    target_logprob = log_probs.gather(-1, target_ids_exp).squeeze(-1)  # [B]
+    target_logprob = log_probs.gather(-1, target_token_id[:, None]).squeeze(-1)
 
-    target_logits = logits.gather(-1, target_ids_exp).squeeze(-1)      # [B]
-    target_rank = (logits > target_logits[:, None]).sum(dim=-1) + 1    # [B]
+    target_logits = logits.gather(-1, target_token_id[:, None]).squeeze(-1)
+    target_rank = (logits > target_logits[:, None]).sum(dim=-1) + 1
 
     if original_was_1d:
         target_logprob = target_logprob.squeeze(0)
@@ -92,68 +82,48 @@ def target_token_stats_patching(logits, target_token_id):
 
     return target_logprob, target_rank
 
-def target_in_topk_hit(logits, target_ids, top_k=20):
+
+def select_receiver_foil_token(logits, target_token_id):
     """
-    Check whether the target token is inside the model top-k.
-
-    logits: [B, V] or [V]
-    target_ids: [B] or scalar-compatible
-
-    returns:
-        hit: [B] float tensor in {0.0, 1.0}
+    Choose the foil as the best non-target token of the unpatched receiver.
     """
-    if top_k < 1:
-        raise ValueError("top_k must be >= 1")
+    logits, original_was_1d = _ensure_2d_logits(logits)
+    target_token_id = _ensure_1d_token_ids(
+        target_token_id,
+        logits.device,
+        logits.shape[0],
+    )
 
-    if logits.ndim == 1:
-        logits = logits.unsqueeze(0)
+    masked_logits = logits.clone()
+    masked_logits.scatter_(1, target_token_id[:, None], float("-inf"))
+    foil_token_id = masked_logits.argmax(dim=-1)
 
-    if logits.ndim != 2:
-        raise ValueError(f"logits must have shape [B, V] or [V], got {tuple(logits.shape)}")
+    if original_was_1d:
+        foil_token_id = foil_token_id.squeeze(0)
 
-    if not th.is_tensor(target_ids):
-        target_ids = th.as_tensor(target_ids, device=logits.device)
-
-    if target_ids.ndim == 0:
-        target_ids = target_ids.unsqueeze(0)
-
-    if target_ids.ndim != 1:
-        raise ValueError(f"target_ids must have shape [B] or scalar, got {tuple(target_ids.shape)}")
-
-    if target_ids.shape[0] != logits.shape[0]:
-        raise ValueError(
-            f"target_ids batch size must match logits batch size: "
-            f"{target_ids.shape[0]} vs {logits.shape[0]}"
-        )
-
-    target_ids = target_ids.to(device=logits.device, dtype=th.long)
-    top_ids = logits.topk(k=top_k, dim=-1).indices  # [B, K]
-
-    hit = (top_ids == target_ids[:, None]).any(dim=-1).to(dtype=th.float32)
-    return hit
+    return foil_token_id
 
 
-def delta_target_in_topk_hit(patched_hit, receiver_hit):
-    # """
-    # Delta Top-K Hit:
-    #     1[target in top-k(patched)] - 1[target in top-k(receiver)]
+def compute_recovery_score(patched_score, receiver_score, donor_score):
+    """
+    Recovery on target log-probability.
+    """
+    num = patched_score - receiver_score
+    denom = (donor_score - receiver_score) + EPS
+    return num / denom
 
-    # patched_logits: [B, V] or [V]
-    # receiver_logits: [B, V] or [V]
-    # target_ids: [B] or scalar-compatible
 
-    # returns:
-    #     delta_hit: [B] float tensor in {-1.0, 0.0, 1.0}
-    # """
-    # patched_hit = target_in_topk_hit(
-    #     logits=patched_logits,
-    #     target_ids=target_ids,
-    #     top_k=top_k,
-    # )
-    # receiver_hit = target_in_topk_hit(
-    #     logits=receiver_logits,
-    #     target_ids=target_ids,
-    #     top_k=top_k,
-    # )
+def compute_logit_difference(logits, target_token_id, foil_token_id):
+    target_logit = gather_token_scores(logits, target_token_id)
+    foil_logit = gather_token_scores(logits, foil_token_id)
+    return target_logit - foil_logit
 
-    return patched_hit - receiver_hit
+
+def delta_logit_difference(patched_ld, receiver_ld):
+    return patched_ld - receiver_ld
+
+
+def compute_logit_diff_recovery(patched_ld, receiver_ld, donor_ld):
+    num = patched_ld - receiver_ld
+    denom = (donor_ld - receiver_ld) + EPS
+    return num / denom

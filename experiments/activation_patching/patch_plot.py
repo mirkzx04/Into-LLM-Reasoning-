@@ -7,7 +7,6 @@ import sys
 os.environ.setdefault("MPLCONFIGDIR", "/tmp/matplotlib-codex")
 
 import matplotlib
-
 matplotlib.use("Agg")
 
 import torch as th
@@ -20,23 +19,20 @@ from experiments.Logit_Lens.lens_plot import (
     aggregate_over_samples,
     metric_display_name,
     plot_metric_panels,
+    position_sort_key,
     sanitize_path_part,
-)
-from experiments.activation_patching.patching_metrics import (
-    delta_kl_divergence,
-    delta_target_in_topk_hit,
 )
 from experiments.experiments_conf import PatchConfig
 from experiments.experiments_utils import (
-    OUT_METADA_KEY,
+    OUT_METADATA_KEY,
     resolve_act_module_names,
 )
 
 
 PATCH_METRICS = (
     "recovery_score",
-    "delta_target_in_topk_hit",
-    "delta_kl_divergence",
+    "delta_logit_diff",
+    "logit_diff_recovery",
     "activation_delta_norm",
     "activation_relative_delta_norm",
     "activation_cosine_similarity",
@@ -48,6 +44,7 @@ PATCH_COMPONENT_DIRS = {
     "attn_resid",
     "mlp_resid",
 }
+LAST_INPUT_POSITION = "last_input_token"
 
 
 def layer_sort_key(layer_label):
@@ -64,7 +61,7 @@ def infer_patch_name(patch_out):
     patch_names = [
         key
         for key in patch_out.keys()
-        if key != OUT_METADA_KEY and not str(key).startswith("__")
+        if key != OUT_METADATA_KEY and not str(key).startswith("__")
     ]
 
     if not patch_names:
@@ -77,19 +74,19 @@ def infer_patch_name(patch_out):
 
 
 def infer_model_names(patch_out, patch_name=None):
-    metadata = patch_out.get(OUT_METADA_KEY, {})
-    receiver_name = metadata.get("recipient_name")
+    metadata = patch_out.get(OUT_METADATA_KEY, {})
+    recipient_name = metadata.get("recipient_name", metadata.get("recivient_name"))
     donor_name = metadata.get("donor_name")
 
-    if receiver_name is not None and donor_name is not None:
-        return str(receiver_name), str(donor_name)
+    if recipient_name is not None and donor_name is not None:
+        return str(recipient_name), str(donor_name)
 
     patch_name = patch_name or infer_patch_name(patch_out)
-    match = re.fullmatch(r"recivient-(.+)_donor-(.+)", str(patch_name))
+    match = re.fullmatch(r"(?:recipient|recivient)-(.+)_donor-(.+)", str(patch_name))
 
     if match is None:
         raise ValueError(
-            "Cannot infer receiver/donor model names from metadata or patching key: "
+            "Cannot infer recipient/donor model names from metadata or patching key: "
             f"{patch_name}"
         )
 
@@ -128,10 +125,7 @@ def infer_positions(patching_ref, metadata, layers, act_names):
     metadata_positions = metadata.get("positions")
 
     if metadata_positions:
-        return sorted(
-            metadata_positions,
-            key=lambda value: float(value) if value is not None else -math.inf,
-        )
+        return sorted(metadata_positions, key=position_sort_key)
 
     positions = []
     for layer in layers:
@@ -140,9 +134,39 @@ def infer_positions(patching_ref, metadata, layers, act_names):
                 if position not in positions:
                     positions.append(position)
 
-    return sorted(
-        positions,
-        key=lambda value: float(value) if value is not None else -math.inf,
+    return sorted(positions, key=position_sort_key)
+
+
+def is_last_input_position(position):
+    return position == LAST_INPUT_POSITION
+
+
+def split_plot_positions(positions):
+    positions = list(positions)
+    completion_positions = [
+        position for position in positions if not is_last_input_position(position)
+    ]
+    last_input_positions = [
+        position for position in positions if is_last_input_position(position)
+    ]
+
+    groups = []
+    if completion_positions:
+        groups.append((None, completion_positions))
+    if last_input_positions:
+        groups.append((LAST_INPUT_POSITION, last_input_positions))
+
+    return groups
+
+
+def inject_position_group_dir(output_path, position_group):
+    if position_group is None:
+        return output_path
+
+    return os.path.join(
+        os.path.dirname(output_path),
+        sanitize_path_part(position_group),
+        os.path.basename(output_path),
     )
 
 
@@ -195,27 +219,11 @@ def extract_patch_metric(metrics_ref, metric_name):
         "activation_delta_norm",
         "activation_relative_delta_norm",
         "activation_cosine_similarity",
+        "recovery_score",
+        "delta_logit_diff",
+        "logit_diff_recovery",
     }:
         return as_sample_tensor(metrics_ref[metric_name])
-
-    if metric_name == "recovery_score":
-        return as_sample_tensor(metrics_ref["recovery_score"])
-
-    if metric_name == "delta_target_in_topk_hit":
-        return as_sample_tensor(
-            delta_target_in_topk_hit(
-                patched_hit=as_sample_tensor(metrics_ref["patched_hit"]),
-                receiver_hit=as_sample_tensor(metrics_ref["recivier_hit"]),
-            )
-        )
-
-    if metric_name == "delta_kl_divergence":
-        return as_sample_tensor(
-            delta_kl_divergence(
-                kl_recivier_donor=as_sample_tensor(metrics_ref["kl_recivier_donor"]),
-                kl_patched_donor=as_sample_tensor(metrics_ref["kl_patched_donor"]),
-            )
-        )
 
     raise ValueError(f"Unknown patch metric: {metric_name}")
 
@@ -291,7 +299,7 @@ def collect_patch_metric_series(
 
 def build_patch_plot_output_path(
     output_root,
-    receiver_name,
+    recipient_name,
     donor_name,
     act_name,
     metric_name,
@@ -300,7 +308,7 @@ def build_patch_plot_output_path(
 
     return os.path.join(
         output_root,
-        f"{sanitize_path_part(receiver_name)}-{sanitize_path_part(donor_name)}",
+        f"{sanitize_path_part(recipient_name)}-{sanitize_path_part(donor_name)}",
         component_dir,
         f"{sanitize_path_part(metric_name)}.png",
     )
@@ -314,7 +322,7 @@ def resolve_default_patch_cache_path(config=None):
     return os.path.join(
         ACTIVATION_PATCHING_DIR,
         "patch_cache",
-        f"patch_out_recipient-{config.recipient_name}_"
+        f"patch_out_recivient-{config.recivient_name}_"
         f"donor-{config.donor_name}_"
         f"modules-{module_tag}_"
         f"pos-{position_tag}.pt",
@@ -342,8 +350,8 @@ def plot_requested_patch_metrics(
 
     patch_name = infer_patch_name(patch_out)
     patching_ref = patch_out[patch_name]
-    metadata = patch_out.get(OUT_METADA_KEY, {})
-    receiver_name, donor_name = infer_model_names(
+    metadata = patch_out.get(OUT_METADATA_KEY, {})
+    recipient_name, donor_name = infer_model_names(
         patch_out=patch_out,
         patch_name=patch_name,
     )
@@ -364,47 +372,49 @@ def plot_requested_patch_metrics(
         act_names=act_names,
     )
 
-    series_name = f"{receiver_name}_vs_{donor_name}"
+    series_name = f"{recipient_name}_vs_{donor_name}"
     saved_paths = []
 
     for act_name in act_names:
         for metric_name in metric_names:
-            series_by_position = collect_patch_metric_series(
-                patching_ref=patching_ref,
-                metric_name=metric_name,
-                act_name=act_name,
-                positions=positions,
-                layers=layers,
-                series_name=series_name,
-                sample_reducer=sample_reducer,
-            )
+            for position_group, group_positions in split_plot_positions(positions):
+                series_by_position = collect_patch_metric_series(
+                    patching_ref=patching_ref,
+                    metric_name=metric_name,
+                    act_name=act_name,
+                    positions=group_positions,
+                    layers=layers,
+                    series_name=series_name,
+                    sample_reducer=sample_reducer,
+                )
 
-            if not series_by_position:
-                continue
+                if not series_by_position:
+                    continue
 
-            output_path = build_patch_plot_output_path(
-                output_root=output_root,
-                receiver_name=receiver_name,
-                donor_name=donor_name,
-                act_name=act_name,
-                metric_name=metric_name,
-            )
-            title = (
-                "Activation Patching | "
-                f"{metric_display_name(metric_name)} | "
-                f"{resolve_component_dir(act_name)} | "
-                f"{receiver_name} <- {donor_name}"
-            )
-            saved_path = plot_metric_panels(
-                series_by_position=series_by_position,
-                metric_name=metric_name,
-                output_path=output_path,
-                title=title,
-                layer_labels=layers,
-            )
+                output_path = build_patch_plot_output_path(
+                    output_root=output_root,
+                    recipient_name=recipient_name,
+                    donor_name=donor_name,
+                    act_name=act_name,
+                    metric_name=metric_name,
+                )
+                output_path = inject_position_group_dir(output_path, position_group)
+                title = (
+                    "Activation Patching | "
+                    f"{metric_display_name(metric_name)} | "
+                    f"{resolve_component_dir(act_name)} | "
+                    f"{recipient_name} <- {donor_name}"
+                )
+                saved_path = plot_metric_panels(
+                    series_by_position=series_by_position,
+                    metric_name=metric_name,
+                    output_path=output_path,
+                    title=title,
+                    layer_labels=layers,
+                )
 
-            if saved_path:
-                saved_paths.append(saved_path)
+                if saved_path:
+                    saved_paths.append(saved_path)
 
     return saved_paths
 

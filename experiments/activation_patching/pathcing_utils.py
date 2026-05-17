@@ -12,7 +12,6 @@ from tqdm import tqdm
 from models.model import get_rope_theta, load_tl_model
 
 from experiments.Logit_Lens.lens_utils import resolve_predictive_completion_indices
-from experiments.Logit_Lens.lens_metrics import kl_divergence_logits
 from experiments.experiments_utils import (
     normalize_activation_layer_idx,
     normalize_layer_label,
@@ -21,7 +20,10 @@ from experiments.experiments_utils import (
 from experiments.activation_patching.patching_metrics import (
     compute_recovery_score,
     target_token_stats_patching,
-    target_in_topk_hit
+    select_receiver_foil_token,
+    compute_logit_difference,
+    delta_logit_difference,
+    compute_logit_diff_recovery,
 )
 
 def build_patching_name(recivient_name, donor_name):
@@ -62,10 +64,8 @@ def build_patch_out(jobs, recivient_name, donor_name):
         
         patch_out[patching_name][layer][act_name][position] = {
             "recovery_score": [],
-            "kl_recivier_donor": [],
-            "kl_patched_donor": [],
-            "patched_hit": [],
-            "recivier_hit": [],
+            "delta_logit_diff": [],
+            "logit_diff_recovery": [],
             "sample_ids": [],
             "activation_delta_norm": [],
             "activation_relative_delta_norm": [],
@@ -96,20 +96,26 @@ def make_patch_hook(donor_act, patch_stats):
             receiver_act : Activation of the receiver model  | Shape : [B, seq_len, d_model]
         """
         patched = receiver_act.clone()
-        receiver_vec = patched[:, -1, :].detach().cpu()
+        receiver_vec = patched[:, -1, :].detach()
         donor_vec = donor_act.to(
             device = patched.device,
             dtype = patched.dtype,
         )
 
-        delta = donor_vec - receiver_vec.squeeze(0)
+        receiver_vec = receiver_vec.to(
+            device=donor_vec.device,
+            dtype=donor_vec.dtype,
+        )
+        receiver_vec_flat = receiver_vec.squeeze(0)
+
+        delta = donor_vec - receiver_vec_flat
 
         patch_stats["activation_delta_norm"] = delta.norm().detach().cpu()
         patch_stats["activation_relative_delta_norm"] = (
             delta.norm() / (receiver_vec.norm() + 1e-12)
         ).detach().cpu()
         patch_stats["activation_cosine_sim"] = th.nn.functional.cosine_similarity(
-            receiver_vec.squeeze(0).float(),
+            receiver_vec_flat.float(),
             donor_vec.float(),
             dim = 0,
         ).detach().cpu()
@@ -125,8 +131,8 @@ def run_patched_forward(
     hook_name, 
     tokens_for_recivient
 ):
-    patched_stats = {}
-    patch_hook = make_patch_hook(donor_act)
+    patch_stats = {}
+    patch_hook = make_patch_hook(donor_act, patch_stats)
 
     with th.no_grad():
         patched_logits = recivient_model.run_with_hooks(
@@ -134,7 +140,7 @@ def run_patched_forward(
             fwd_hooks = [(hook_name, patch_hook)]
         ) # Shape [B, seq_len, vocab_size]
 
-    return patched_logits[:, -1, :], patched_stats
+    return patched_logits[:, -1, :], patch_stats
 
 def run_donor_forward(
     donor_model,
@@ -155,22 +161,23 @@ def run_recivient_forward(
     return recivient_logits[:, -1, :]
 
 def append_patch_out(
-    kl_recivier_donor,
-    kl_patched_donor,
-    patched_hit,
-    recivier_hit,
-    recovery_score,
+    recovery_score_value,
+    delta_logit_diff_value,
+    logit_diff_recovery_value,
     sid,
     patch_metrics,
-    patch_stats
+    patch_stats,
 ):
-    
-    patch_metrics["recovery_score"].append(recovery_score.squeeze().detach().cpu())
-    patch_metrics["kl_recivier_donor"].append(kl_recivier_donor.squeeze().detach().cpu())
-    patch_metrics["kl_patched_donor"].append(kl_patched_donor.squeeze().detach().cpu())
-    patch_metrics["patched_hit"].append(patched_hit.squeeze().detach().cpu())
-    patch_metrics["recivier_hit"].append(recivier_hit.squeeze().detach().cpu())
-    
+    patch_metrics["recovery_score"].append(
+        recovery_score_value.squeeze().detach().cpu()
+    )
+    patch_metrics["delta_logit_diff"].append(
+        delta_logit_diff_value.squeeze().detach().cpu()
+    )
+    patch_metrics["logit_diff_recovery"].append(
+        logit_diff_recovery_value.squeeze().detach().cpu()
+    )
+
     patch_metrics["activation_delta_norm"].append(
         patch_stats["activation_delta_norm"].detach().cpu()
     )
@@ -178,20 +185,19 @@ def append_patch_out(
         patch_stats["activation_relative_delta_norm"].detach().cpu()
     )
     patch_metrics["activation_cosine_similarity"].append(
-        patch_stats["activation_cosine_similarity"].detach().cpu()
+        patch_stats["activation_cosine_sim"].detach().cpu()
     )
 
     patch_metrics["sample_ids"].append(int(sid))
-
     return patch_metrics
 
-def compute_logprob_scores(logits, target_token_id): 
-    logits_logprob, target_rank = target_token_stats_patching(
+def compute_target_logprob(logits, target_token_id): 
+    logits_logprob, _ = target_token_stats_patching(
         logits=logits, 
         target_token_id=target_token_id
     ) 
 
-    return logits_logprob, target_rank
+    return logits_logprob
 
 def stack_patch_out_metrics(patch_out) :
     """
@@ -292,7 +298,7 @@ def patch_view(
                 )
                 donor_act = donor_act[saved_layer_idx, act_idx, :] # Extract activation on selected position | Shape : [d_model]
                 tokens_for_recivient = full_tokens[:target_idx].unsqueeze(0) # Take token until selected position | Shape : [1, seq_len]
-                token_target_id = full_tokens[target_idx]
+                target_token_id = full_tokens[target_idx]
 
                 # Compute logits for donor model and recivient model
                 patched_logits, patch_stats = run_patched_forward(
@@ -311,60 +317,69 @@ def patch_view(
                 ) # Shape : [B, vocab_size]
 
                 # Compute log-probability on model logits 
-                patched_logprob, _ = compute_logprob_scores(
+                patched_logprob = compute_target_logprob(
                     logits=patched_logits,
-                    target_token_id=token_target_id
-                ) # Shape : [B]
-                donor_logprob, _ = compute_logprob_scores(
-                    logits=donor_logits, 
-                    target_token_id=token_target_id
-                ) # Shape : [B]
-                recivient_logprob, _ = compute_logprob_scores(
+                    target_token_id=target_token_id,
+                )
+                donor_logprob = compute_target_logprob(
+                    logits=donor_logits,
+                    target_token_id=target_token_id,
+                )
+                recipient_logprob = compute_target_logprob(
                     logits=recivient_logits,
-                    target_token_id=token_target_id
-                ) # Shape : [B]
-                recovery_score = compute_recovery_score(
+                    target_token_id=target_token_id,
+                )
+
+                recovery_score_value = compute_recovery_score(
                     patched_score=patched_logprob,
                     donor_score=donor_logprob,
-                    recivier_score=recivient_logprob
+                    receiver_score=recipient_logprob,
                 )
 
-                # Compute kl divergence
-                kl_recivier_donor = kl_divergence_logits(
-                    logits_p=recivient_logits,
-                    logits_q= donor_logits
-                ) # Shape : [B]
-                kl_patched_donor = kl_divergence_logits(
-                    logits_p=patched_logits,
-                    logits_q=donor_logits
-                ) # Shape : [B]
-
-                # Compute Target Top-K recovery
-                patched_hit = target_in_topk_hit(
-                    logits=patched_logits,
-                    target_ids=token_target_id
-                )
-                recivier_hit = target_in_topk_hit(
+                foil_token_id = select_receiver_foil_token(
                     logits=recivient_logits,
-                    target_ids=token_target_id
+                    target_token_id=target_token_id,
                 )
-                
+
+                recipient_ld = compute_logit_difference(
+                    logits=recivient_logits,
+                    target_token_id=target_token_id,
+                    foil_token_id=foil_token_id,
+                )
+                patched_ld = compute_logit_difference(
+                    logits=patched_logits,
+                    target_token_id=target_token_id,
+                    foil_token_id=foil_token_id,
+                )
+                donor_ld = compute_logit_difference(
+                    logits=donor_logits,
+                    target_token_id=target_token_id,
+                    foil_token_id=foil_token_id,
+                )
+
+                delta_logit_diff_value = delta_logit_difference(
+                    patched_ld=patched_ld,
+                    receiver_ld=recipient_ld,
+                )
+                logit_diff_recovery_value = compute_logit_diff_recovery(
+                    patched_ld=patched_ld,
+                    receiver_ld=recipient_ld,
+                    donor_ld=donor_ld,
+                )
+
                 patch_metrics = patch_out[patching_name][layer][act_name][position]
                 append_patch_out(
-                    kl_patched_donor=kl_patched_donor,
-                    kl_recivier_donor=kl_recivier_donor,
-                    patched_hit=patched_hit,
-                    recivier_hit=recivier_hit,
-                    recovery_score=recovery_score,
+                    recovery_score_value=recovery_score_value,
+                    delta_logit_diff_value=delta_logit_diff_value,
+                    logit_diff_recovery_value=logit_diff_recovery_value,
                     sid=sid,
                     patch_metrics=patch_metrics,
-                    patch_stats=patch_stats
+                    patch_stats=patch_stats,
                 )
                 pbar.update(1)
 
     patch_out = stack_patch_out_metrics(patch_out)
 
-    del recivient_model, donor_model
     th.cuda.empty_cache()
 
     return patch_out
@@ -372,8 +387,6 @@ def patch_view(
 
 
             
-
-
 
 
 
