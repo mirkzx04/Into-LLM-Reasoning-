@@ -17,30 +17,31 @@ DEFAULT_CKA_ACTIVATION_H5_PATH = os.path.join(
 class LensConfig:
     """Configuration for Logit Lens runs."""
 
-    positions: tuple = (0.1, 0.5, 0.9, 0.95)
+    positions: tuple = ("last_input_token", 0.1, 0.5, 0.9, 0.95)
     act_modules: tuple = ("resid_pre", "attn_resid", "mlp_resid")
     report_act_modules: tuple = ("attn_resid", "mlp_resid")
     lens_modes: tuple = ("native",)
     shared_lens_source: str = "rlvr"
     layers: object = None
     batch_size: int = 10
-    max_sample: int = 100
+    max_sample: int = 500
     sample_selection_seed: int = 42
+    model_names = None
 
 
 @dataclass(frozen=True)
 class PatchConfig:
     """Configuration for activation patching runs."""
 
-    positions: tuple = (0.5, 0.9, 0.95)
-    patch_modules: tuple = ("attn_out", "mlp_out", "resid_mid")
-    recipient_name: str = "sftt"
+    positions: tuple = ("last_input_token", 0.1, 0.5, 0.9, 0.95)
+    patch_modules: tuple = ("attn_out", "mlp_out", "resid_mid", "resid_post")
+    recivient_name: str = "base"
     donor_name: str = "rlvr"
     layers: object = None
     batch_size: int = 10
-    max_sample: int = 100
+    max_sample: int = 500
     sample_selection_seed: int = 42
-    model_names = ["rlvr", "sftt"]
+    model_names = ["rlvr", "base"]
 
 
 @dataclass(frozen=True)

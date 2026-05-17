@@ -9,7 +9,7 @@ from experiments.tok_dataset_utils import (
     build_token_index,
 )
 
-OUT_METADA_KEY = "__metadata__"
+OUT_METADATA_KEY = "__metadata__"
 
 ACT_MODULE_ALIASES = {
     # direct outputs
@@ -107,7 +107,7 @@ def abs_path_or_none(path):
 def attach_metadata(lens_out, metadata):
     """Attach metadata to a lens output dict without mutating the original."""
     lens_out = dict(lens_out)
-    lens_out[OUT_METADA_KEY] = metadata
+    lens_out[OUT_METADATA_KEY] = metadata
     return lens_out
 
 
